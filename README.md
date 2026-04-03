@@ -48,19 +48,18 @@ npm run dev
 В репозитории уже подготовлены:
 
 - `Dockerfile`
-- `docker-compose.yml`
+- `amvera.yml`
 - `.github/workflows/ci-cd.yml`
-- `deploy/Caddyfile`
-- `deploy/remote-deploy.sh`
 
-Рекомендуемый бесплатный прод-стек:
+Рекомендуемый деплой:
 
 - `GitHub`
-- `Oracle Cloud Always Free VM`
-- `GitHub Actions`
-- `Caddy` для HTTPS
+- `Amvera`
 
-Подробная инструкция: [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)
+Подробная инструкция:
+
+- [docs/AMVERA_DEPLOYMENT.md](./docs/AMVERA_DEPLOYMENT.md)
+- [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)
 
 ## Скрипты
 
