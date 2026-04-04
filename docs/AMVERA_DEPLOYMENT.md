@@ -87,17 +87,45 @@
 
 Если нужно, запусти redeploy вручную из интерфейса проекта.
 
-## 6. Как будет работать автодеплой
+## 6. Настрой автосинхронизацию GitHub -> Amvera
+
+Чтобы больше не делать `git push amvera ...` вручную, в GitHub репозитории добавь secrets:
+
+- `AMVERA_GIT_URL`
+- `AMVERA_GIT_USERNAME`
+- `AMVERA_GIT_PASSWORD`
+
+Значения:
+
+- `AMVERA_GIT_URL` = `https://git.msk0.amvera.ru/ТВОЙ_ЛОГИН/ТВОЙ_ПРОЕКТ`
+- `AMVERA_GIT_USERNAME` = твой логин Amvera
+- `AMVERA_GIT_PASSWORD` = твой пароль Amvera
+
+После этого workflow из [ci-cd.yml](/s:/ProgrammingInterviewer/.github/workflows/ci-cd.yml) будет:
+
+1. собирать проект в GitHub Actions;
+2. после успешной сборки пушить текущий commit из `main` в `master` репозитория Amvera.
+
+Тогда обычный процесс станет таким:
+
+```bash
+git push origin main
+```
+
+И больше ничего руками пушить в Amvera не придётся.
+
+## 7. Как будет работать автодеплой
 
 Твой сценарий `push в GitHub -> деплой` здесь работает так:
 
 1. Ты пушишь в `main`.
 2. GitHub Actions проверяет `npm run build` и `docker build`.
-3. Amvera, привязанная к GitHub, подтягивает новый commit и разворачивает новую версию.
+3. GitHub Actions автоматически пушит этот commit в git-репозиторий Amvera.
+4. Amvera видит новый commit у себя и запускает сборку/деплой.
 
-То есть `CI` делает GitHub, а `CD` делает сама Amvera.
+То есть `CI` делает GitHub, а `CD` запускается через git-репозиторий Amvera.
 
-## 7. Что проверить после выката
+## 8. Что проверить после выката
 
 - открывается главная страница;
 - заметки и категории создаются;

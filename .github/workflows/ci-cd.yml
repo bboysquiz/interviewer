@@ -33,3 +33,42 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t programming-interviewer:ci .
+
+  sync-amvera:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure Amvera secrets are configured
+        env:
+          AMVERA_GIT_PASSWORD: ${{ secrets.AMVERA_GIT_PASSWORD }}
+          AMVERA_GIT_URL: ${{ secrets.AMVERA_GIT_URL }}
+          AMVERA_GIT_USERNAME: ${{ secrets.AMVERA_GIT_USERNAME }}
+        run: |
+          test -n "$AMVERA_GIT_URL" || { echo "Missing secret AMVERA_GIT_URL"; exit 1; }
+          test -n "$AMVERA_GIT_USERNAME" || { echo "Missing secret AMVERA_GIT_USERNAME"; exit 1; }
+          test -n "$AMVERA_GIT_PASSWORD" || { echo "Missing secret AMVERA_GIT_PASSWORD"; exit 1; }
+
+      - name: Push main to Amvera master
+        env:
+          AMVERA_GIT_PASSWORD: ${{ secrets.AMVERA_GIT_PASSWORD }}
+          AMVERA_GIT_URL: ${{ secrets.AMVERA_GIT_URL }}
+          AMVERA_GIT_USERNAME: ${{ secrets.AMVERA_GIT_USERNAME }}
+        run: |
+          cat <<'EOF' > askpass.sh
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s' "$AMVERA_GIT_USERNAME" ;;
+            *Password*) printf '%s' "$AMVERA_GIT_PASSWORD" ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod +x askpass.sh
+          git remote add amvera "$AMVERA_GIT_URL"
+          GIT_ASKPASS="$PWD/askpass.sh" GIT_TERMINAL_PROMPT=0 git push --force amvera HEAD:master
