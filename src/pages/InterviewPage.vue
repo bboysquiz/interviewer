@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watchEffect } from 'vue'
 
+import { openImageViewer } from '@/features/images/imageViewer'
 import {
   clearContextualFooter,
   setContextualFooter,
@@ -67,6 +68,22 @@ const currentSectionTitle = computed(
     sectionOptions.find((item) => item.id === interviewSection.value)?.title ??
     'Собес',
 )
+
+const openFoundationImage = (
+  item: (typeof questionFoundationItems.value)[number],
+): void => {
+  if (!item.imageUrl) {
+    return
+  }
+
+  openImageViewer({
+    src: item.imageUrl,
+    alt: 'Основа вопроса',
+    title: item.lastQuestionedLabel
+      ? `Основа вопроса · ${item.lastQuestionedLabel}`
+      : 'Основа вопроса',
+  })
+}
 
 watchEffect(() => {
   if (!interviewSection.value) {
@@ -331,6 +348,7 @@ onBeforeUnmount(() => {
                 :src="item.imageUrl"
                 alt="Основа вопроса"
                 class="interview-page__foundation-image"
+                @click="openFoundationImage(item)"
               />
               <p v-if="item.text" class="interview-page__foundation-text">
                 {{ item.text }}
@@ -597,6 +615,7 @@ onBeforeUnmount(() => {
   border-radius: 16px;
   object-fit: contain;
   background: rgba(255, 255, 255, 0.72);
+  cursor: zoom-in;
 }
 
 @media (hover: hover) {

@@ -70,6 +70,30 @@ export interface EvaluateInterviewAnswerResult extends AiExecutionDto {
   overallSummary: string | null
 }
 
+export interface OrganizeKnowledgeBaseNoteBlockInput {
+  id: string
+  type: 'text' | 'image'
+  text?: string | null
+  fileName?: string | null
+  extractedText?: string | null
+  imageDescription?: string | null
+}
+
+export interface OrganizeKnowledgeBaseNoteInput {
+  categoryName?: string | null
+  noteTitle?: string | null
+  blocks: OrganizeKnowledgeBaseNoteBlockInput[]
+}
+
+export interface OrganizedNoteSection {
+  title: string
+  blockIndexes: number[]
+}
+
+export interface OrganizeKnowledgeBaseNoteResult extends AiExecutionDto {
+  sections: OrganizedNoteSection[]
+}
+
 export interface GenerateInterviewQuestionRequestDto {
   sourceType: AiInterviewSourceType
   categoryId?: string | null

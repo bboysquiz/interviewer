@@ -19,6 +19,8 @@ import type {
   EvaluateInterviewAnswerResult,
   GenerateInterviewQuestionInput,
   GenerateInterviewQuestionResult,
+  OrganizeKnowledgeBaseNoteInput,
+  OrganizeKnowledgeBaseNoteResult,
 } from '../dto.js'
 import {
   buildEvaluationResult,
@@ -28,12 +30,16 @@ import {
   buildInterviewEvaluationUserPrompt,
   buildInterviewQuestionSystemPrompt,
   buildInterviewQuestionUserPrompt,
+  buildNoteOrganizationResult,
+  buildNoteOrganizationSystemPrompt,
+  buildNoteOrganizationUserPrompt,
   buildQuestionResult,
   buildUsage,
   formatProviderModel,
   imageAnalysisSchema,
   interviewEvaluationSchema,
   interviewQuestionSchema,
+  noteOrganizationSchema,
   parseStructuredRecord,
 } from '../common.js'
 import { AiServiceError } from '../errors.js'
@@ -818,6 +824,61 @@ const evaluateInterviewAnswer = async (
   )
 }
 
+const organizeKnowledgeBaseNote = async (
+  input: OrganizeKnowledgeBaseNoteInput,
+): Promise<OrganizeKnowledgeBaseNoteResult> => {
+  if (input.blocks.length === 0) {
+    throw new AiServiceError('Note blocks are required for organization.', {
+      status: 400,
+      code: 'ai_validation_error',
+    })
+  }
+
+  const response = await callGemini(GEMINI_INTERVIEW_QUESTION_MODEL, {
+    systemInstruction: {
+      parts: [
+        {
+          text: buildNoteOrganizationSystemPrompt(),
+        },
+      ],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: buildNoteOrganizationUserPrompt(input),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseJsonSchema: noteOrganizationSchema,
+      maxOutputTokens: 2200,
+    },
+  })
+  const rawOutput = extractResponseText(
+    response,
+    'Gemini returned an empty structured response for note organization.',
+  )
+  const record = parseStructuredRecord(
+    rawOutput,
+    'Gemini returned invalid JSON for note organization.',
+  )
+  const model = formatProviderModel(
+    'gemini',
+    response.modelVersion ?? GEMINI_INTERVIEW_QUESTION_MODEL,
+  )
+
+  return buildNoteOrganizationResult(
+    record,
+    model,
+    response.responseId ?? null,
+    buildGeminiUsage(response),
+  )
+}
+
 export const geminiProvider: AiProvider = {
   name: 'gemini',
   get isConfigured() {
@@ -827,4 +888,5 @@ export const geminiProvider: AiProvider = {
   analyzeImageForKnowledgeBase,
   generateInterviewQuestion,
   evaluateInterviewAnswer,
+  organizeKnowledgeBaseNote,
 }

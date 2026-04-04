@@ -5,6 +5,8 @@ import type {
   EvaluateInterviewAnswerResult,
   GenerateInterviewQuestionInput,
   GenerateInterviewQuestionResult,
+  OrganizeKnowledgeBaseNoteInput,
+  OrganizeKnowledgeBaseNoteResult,
 } from './dto.js'
 
 export type AiProviderName = 'gemini' | 'groq'
@@ -22,4 +24,7 @@ export interface AiProvider {
   evaluateInterviewAnswer: (
     input: EvaluateInterviewAnswerInput,
   ) => Promise<EvaluateInterviewAnswerResult>
+  organizeKnowledgeBaseNote: (
+    input: OrganizeKnowledgeBaseNoteInput,
+  ) => Promise<OrganizeKnowledgeBaseNoteResult>
 }

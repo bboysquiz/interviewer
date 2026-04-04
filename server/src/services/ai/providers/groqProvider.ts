@@ -14,6 +14,8 @@ import type {
   EvaluateInterviewAnswerResult,
   GenerateInterviewQuestionInput,
   GenerateInterviewQuestionResult,
+  OrganizeKnowledgeBaseNoteInput,
+  OrganizeKnowledgeBaseNoteResult,
 } from '../dto.js'
 import {
   buildEvaluationResult,
@@ -23,6 +25,9 @@ import {
   buildInterviewEvaluationUserPrompt,
   buildInterviewQuestionSystemPrompt,
   buildInterviewQuestionUserPrompt,
+  buildNoteOrganizationResult,
+  buildNoteOrganizationSystemPrompt,
+  buildNoteOrganizationUserPrompt,
   buildQuestionResult,
   buildUsage,
   formatProviderModel,
@@ -318,6 +323,67 @@ const evaluateInterviewAnswer = async (
   }
 }
 
+const organizeKnowledgeBaseNote = async (
+  input: OrganizeKnowledgeBaseNoteInput,
+): Promise<OrganizeKnowledgeBaseNoteResult> => {
+  if (input.blocks.length === 0) {
+    throw new AiServiceError('Note blocks are required for organization.', {
+      status: 400,
+      code: 'ai_validation_error',
+    })
+  }
+
+  try {
+    const client = getGroqClient()
+    const completion = await client.chat.completions.create({
+      model: GROQ_INTERVIEW_QUESTION_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            buildNoteOrganizationSystemPrompt(),
+            'Return only one JSON object with key sections. Each section must include title and block_indexes.',
+          ].join('\n\n'),
+        },
+        {
+          role: 'user',
+          content: buildNoteOrganizationUserPrompt(input),
+        },
+      ],
+      response_format: {
+        type: 'json_object',
+      },
+      max_completion_tokens: 2200,
+    })
+
+    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
+
+    if (!rawOutput) {
+      throw new AiServiceError(
+        'Groq returned an empty structured response for note organization.',
+        {
+          status: 502,
+          code: 'ai_invalid_response',
+        },
+      )
+    }
+
+    const record = parseStructuredRecord(
+      rawOutput,
+      'Groq returned invalid JSON for note organization.',
+    )
+
+    return buildNoteOrganizationResult(
+      record,
+      formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+      completion.id ?? null,
+      buildGroqUsage(completion.usage),
+    )
+  } catch (error) {
+    throw toGroqAiServiceError(error, 'Groq note organization failed.')
+  }
+}
+
 export const groqProvider: AiProvider = {
   name: 'groq',
   get isConfigured() {
@@ -327,4 +393,5 @@ export const groqProvider: AiProvider = {
   analyzeImageForKnowledgeBase,
   generateInterviewQuestion,
   evaluateInterviewAnswer,
+  organizeKnowledgeBaseNote,
 }

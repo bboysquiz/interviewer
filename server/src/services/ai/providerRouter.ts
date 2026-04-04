@@ -10,6 +10,8 @@ import type {
   EvaluateInterviewAnswerResult,
   GenerateInterviewQuestionInput,
   GenerateInterviewQuestionResult,
+  OrganizeKnowledgeBaseNoteInput,
+  OrganizeKnowledgeBaseNoteResult,
 } from './dto.js'
 import { AiServiceError } from './errors.js'
 import { geminiProvider } from './providers/geminiProvider.js'
@@ -20,6 +22,7 @@ type AiTask =
   | 'image_analysis'
   | 'interview_question_generation'
   | 'interview_answer_evaluation'
+  | 'note_organization'
 
 const providers: Record<AiProviderName, AiProvider> = {
   gemini: geminiProvider,
@@ -172,4 +175,11 @@ export const evaluateInterviewAnswer = async (
 ): Promise<EvaluateInterviewAnswerResult> =>
   withProviderFallback('interview_answer_evaluation', (provider) =>
     provider.evaluateInterviewAnswer(input),
+  )
+
+export const organizeKnowledgeBaseNote = async (
+  input: OrganizeKnowledgeBaseNoteInput,
+): Promise<OrganizeKnowledgeBaseNoteResult> =>
+  withProviderFallback('note_organization', (provider) =>
+    provider.organizeKnowledgeBaseNote(input),
   )

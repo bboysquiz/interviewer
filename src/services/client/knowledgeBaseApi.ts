@@ -48,6 +48,22 @@ export interface UpdateNoteInput {
   contentBlocks?: NoteContentBlock[]
 }
 
+export interface OrganizeNoteResponse {
+  note: Note
+  organized: {
+    sectionCount: number
+  }
+  ai: {
+    model: string
+    requestId: string | null
+    usage: {
+      inputTokens: number | null
+      outputTokens: number | null
+      totalTokens: number | null
+    } | null
+  }
+}
+
 export interface UpdateAttachmentProcessingInput {
   extractedText?: string | null
   imageDescription?: string | null
@@ -136,6 +152,11 @@ export const knowledgeBaseApi = {
     requestJson<Note>(`${API_PATHS.notes}/${noteId}`, {
       method: 'PATCH',
       body: JSON.stringify(input),
+    }),
+
+  organizeNote: (noteId: string) =>
+    requestJson<OrganizeNoteResponse>(`${API_PATHS.notes}/${noteId}/organize`, {
+      method: 'POST',
     }),
 
   deleteNote: (noteId: string) =>

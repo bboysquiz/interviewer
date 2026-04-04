@@ -8,6 +8,9 @@ import type {
   EvaluateInterviewCriterionResult,
   GenerateInterviewQuestionInput,
   InterviewQuestionDifficulty,
+  OrganizeKnowledgeBaseNoteInput,
+  OrganizeKnowledgeBaseNoteResult,
+  OrganizedNoteSection,
 } from './dto.js'
 import { AiServiceError } from './errors.js'
 
@@ -161,6 +164,41 @@ export const interviewEvaluationSchema = {
   },
 } as const
 
+export const noteOrganizationSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['sections'],
+  properties: {
+    sections: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 24,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'block_indexes'],
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Short Russian section title.',
+          },
+          block_indexes: {
+            type: 'array',
+            description:
+              'One-based indexes of source note blocks that belong to this section.',
+            minItems: 1,
+            maxItems: 200,
+            items: {
+              type: 'integer',
+              minimum: 1,
+            },
+          },
+        },
+      },
+    },
+  },
+} as const
+
 export const buildImageAnalysisPrompt = (
   input: AnalyzeImageForKnowledgeBaseInput,
 ): string =>
@@ -251,6 +289,61 @@ export const buildInterviewEvaluationUserPrompt = (
     `Answer: ${input.answerText}`,
     'Knowledge base context:',
     input.knowledgeBaseContext,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
+const buildOrganizationBlockDescriptor = (
+  block: OrganizeKnowledgeBaseNoteInput['blocks'][number],
+  index: number,
+): string => {
+  if (block.type === 'text') {
+    return [
+      `[${index + 1}] TEXT`,
+      `Text: ${block.text?.trim() || 'Пустой текстовый блок.'}`,
+    ].join('\n')
+  }
+
+  return [
+    `[${index + 1}] IMAGE`,
+    block.fileName ? `File: ${block.fileName}` : null,
+    block.extractedText?.trim()
+      ? `Visible text: ${block.extractedText.trim()}`
+      : 'Visible text: нет надёжно извлечённого текста.',
+    block.imageDescription?.trim()
+      ? `Description: ${block.imageDescription.trim()}`
+      : 'Description: описание ещё не сформировано.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+export const buildNoteOrganizationSystemPrompt = (): string =>
+  [
+    'You organize a user note into clear topical sections.',
+    'Return all natural-language fields in Russian.',
+    'Do not rewrite, summarize, or duplicate the note content.',
+    'You may only group existing note blocks into sections.',
+    'Each source block must belong to exactly one best-fitting section.',
+    'If a block could fit multiple themes, choose the single most appropriate section.',
+    'Avoid tiny one-block sections when a related broader section exists.',
+    'Use a generic final section like "Разное" only if some blocks truly do not fit better.',
+    'Prefer a study-friendly order: basics first, then related details, edge cases, and examples.',
+    'Keep section titles short and concrete.',
+  ].join('\n')
+
+export const buildNoteOrganizationUserPrompt = (
+  input: OrganizeKnowledgeBaseNoteInput,
+): string =>
+  [
+    input.categoryName ? `Category: ${input.categoryName}` : null,
+    input.noteTitle ? `Note title: ${input.noteTitle}` : null,
+    'Group the following note blocks into clean sections.',
+    'Use every block at most once and return only strict JSON.',
+    'Source blocks:',
+    input.blocks
+      .map((block, index) => buildOrganizationBlockDescriptor(block, index))
+      .join('\n\n'),
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -406,6 +499,48 @@ export const normalizeScore = (value: unknown): number => {
   return Math.round(value * 10) / 10
 }
 
+const normalizeSectionTitle = (value: unknown): string => {
+  const normalized = coerceString(value).trim()
+
+  if (!normalized) {
+    return 'Раздел'
+  }
+
+  return normalized.slice(0, 80)
+}
+
+const normalizeOrganizedSections = (
+  value: unknown,
+): OrganizedNoteSection[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item) => {
+      const record =
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? (item as Record<string, unknown>)
+          : null
+
+      if (!record) {
+        return null
+      }
+
+      const blockIndexes = normalizeIntegerArray(record.block_indexes, 200)
+
+      if (blockIndexes.length === 0) {
+        return null
+      }
+
+      return {
+        title: normalizeSectionTitle(record.title),
+        blockIndexes,
+      }
+    })
+    .filter((section): section is OrganizedNoteSection => section !== null)
+}
+
 export const normalizeCriterion = (
   value: unknown,
 ): EvaluateInterviewCriterionResult => {
@@ -490,6 +625,18 @@ export const buildEvaluationResult = (
   knowledgeBase: normalizeCriterion(record.knowledge_base),
   generalKnowledge: normalizeCriterion(record.general_knowledge),
   overallSummary: normalizeOptionalString(record.overall_summary),
+  model,
+  requestId,
+  usage,
+})
+
+export const buildNoteOrganizationResult = (
+  record: Record<string, unknown>,
+  model: string,
+  requestId: string | null,
+  usage: OrganizeKnowledgeBaseNoteResult['usage'],
+): OrganizeKnowledgeBaseNoteResult => ({
+  sections: normalizeOrganizedSections(record.sections),
   model,
   requestId,
   usage,

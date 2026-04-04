@@ -15,6 +15,9 @@ import {
   type NoteContentBlock,
 } from '../lib/noteContent.js'
 import { coerceString, createId, nowIso } from '../lib/text.js'
+import { createAnalyticsRepository } from '../services/analyticsRepository.js'
+import { AiServiceError } from '../services/ai/errors.js'
+import { reorganizeNoteContent } from '../services/noteOrganization.js'
 
 interface NoteRow {
   id: string
@@ -29,8 +32,20 @@ interface NoteRow {
 const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(value, key)
 
+const parseProviderFromModel = (model: string): string => {
+  const normalized = model.trim()
+  const separatorIndex = normalized.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    return 'unknown'
+  }
+
+  return normalized.slice(0, separatorIndex)
+}
+
 export const createNotesRouter = (db: SqliteDatabase): Router => {
   const router = Router()
+  const analyticsRepository = createAnalyticsRepository(db)
 
   const buildListPlaceholders = (length: number): string =>
     Array.from({ length }, () => '?').join(', ')
@@ -56,9 +71,24 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
   const categoryExistsStatement = db.prepare(
     'SELECT id FROM categories WHERE id = ? LIMIT 1',
   )
+  const categoryByIdStatement = db.prepare(
+    'SELECT id, name FROM categories WHERE id = ? LIMIT 1',
+  )
   const attachmentRowsStatement = db.prepare(
     `
       SELECT id, stored_file_name
+      FROM attachments
+      WHERE note_id = ?
+      ORDER BY created_at ASC
+    `,
+  )
+  const attachmentDetailsStatement = db.prepare(
+    `
+      SELECT
+        id,
+        original_file_name,
+        extracted_text,
+        image_description
       FROM attachments
       WHERE note_id = ?
       ORDER BY created_at ASC
@@ -350,6 +380,111 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     removeStoredFiles(removedAttachmentRows)
 
     response.json(getNoteById(noteId))
+  })
+
+  router.post('/:id/organize', async (request, response) => {
+    const noteId = request.params.id
+    const existing = byIdStatement.get(noteId) as NoteRow | undefined
+
+    if (!existing) {
+      response.status(404).json({
+        message: `Note "${noteId}" was not found.`,
+      })
+      return
+    }
+
+    const attachmentRows = attachmentDetailsStatement.all(noteId) as Array<{
+      id: string
+      original_file_name: string | null
+      extracted_text: string | null
+      image_description: string | null
+    }>
+    const currentAttachmentIds = attachmentRows.map((attachment) => attachment.id)
+    const currentContentBlocks = parseNoteContentBlocks(
+      existing.content_json,
+      existing.content,
+      currentAttachmentIds,
+    )
+    const categoryRow = categoryByIdStatement.get(existing.category_id) as
+      | { id: string; name?: string }
+      | undefined
+
+    try {
+      const organized = await reorganizeNoteContent({
+        categoryName: categoryRow?.name ?? null,
+        noteTitle: existing.title,
+        blocks: currentContentBlocks,
+        attachmentsById: Object.fromEntries(
+          attachmentRows.map((attachment) => [
+            attachment.id,
+            {
+              id: attachment.id,
+              originalFileName: attachment.original_file_name,
+              extractedText: attachment.extracted_text,
+              imageDescription: attachment.image_description,
+            },
+          ]),
+        ),
+      })
+      const updatedAt = nowIso()
+      const nextRawText = deriveRawTextFromContentBlocks(organized.contentBlocks)
+
+      updateStatement.run(
+        existing.title,
+        nextRawText,
+        serializeNoteContentBlocks(organized.contentBlocks),
+        updatedAt,
+        noteId,
+      )
+
+      replaceNoteContentChunks(db, {
+        noteId,
+        categoryId: existing.category_id,
+        title: existing.title,
+        content: nextRawText,
+      })
+
+      analyticsRepository.recordAiUsageEvent({
+        task: 'note_organization',
+        provider: parseProviderFromModel(organized.model),
+        model: organized.model,
+        requestId: organized.requestId,
+        categoryId: existing.category_id,
+        noteId,
+        inputTokens: organized.usage?.inputTokens ?? null,
+        outputTokens: organized.usage?.outputTokens ?? null,
+        totalTokens: organized.usage?.totalTokens ?? null,
+        occurredAt: updatedAt,
+      })
+
+      response.json({
+        note: getNoteById(noteId),
+        organized: {
+          sectionCount: organized.sectionCount,
+        },
+        ai: {
+          model: organized.model,
+          requestId: organized.requestId,
+          usage: organized.usage,
+        },
+      })
+    } catch (error) {
+      if (error instanceof AiServiceError) {
+        response.status(error.status).json({
+          message: error.message,
+          code: error.code,
+          ...(error.details !== undefined ? { details: error.details } : {}),
+        })
+        return
+      }
+
+      response.status(500).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : 'AI note organization failed.',
+      })
+    }
   })
 
   router.delete('/:id', (request, response) => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { openImageViewer } from '@/features/images/imageViewer'
 import { buildApiUrl } from '@/services/client/http'
 import { highlightText } from '@/shared/lib/highlight'
 import type { Attachment, NoteContentBlock, NoteImageBlock } from '@/types'
@@ -47,6 +48,23 @@ const attachmentPreviewUrl = (block: NoteImageBlock): string | null => {
   return attachment ? buildApiUrl(attachment.storagePath) : null
 }
 
+const openAttachmentPreview = (block: NoteImageBlock): void => {
+  const previewUrl = attachmentPreviewUrl(block)
+
+  if (!previewUrl) {
+    return
+  }
+
+  const imageLabel =
+    attachmentForBlock(block)?.originalFileName ?? 'Скриншот заметки'
+
+  openImageViewer({
+    src: previewUrl,
+    alt: imageLabel,
+    title: imageLabel,
+  })
+}
+
 const imageStatusCopy = (block: NoteImageBlock): string | null => {
   const attachment = attachmentForBlock(block)
 
@@ -93,12 +111,11 @@ const highlightedText = (value: string): string =>
       />
 
       <template v-else>
-        <a
+        <button
           v-if="attachmentPreviewUrl(block)"
           class="note-content-renderer__image-link"
-          :href="attachmentPreviewUrl(block) ?? '#'"
-          target="_blank"
-          rel="noreferrer"
+          type="button"
+          @click="openAttachmentPreview(block)"
         >
           <img
             class="note-content-renderer__image"
@@ -109,7 +126,7 @@ const highlightedText = (value: string): string =>
             "
             loading="lazy"
           />
-        </a>
+        </button>
 
         <div class="note-content-renderer__image-copy">
           <div class="tag-row">
@@ -214,9 +231,13 @@ const highlightedText = (value: string): string =>
 
 .note-content-renderer__image-link {
   display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
   overflow: hidden;
   border-radius: 18px;
   background: rgba(240, 229, 215, 0.6);
+  cursor: zoom-in;
 }
 
 .note-content-renderer__image {

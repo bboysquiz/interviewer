@@ -6,6 +6,7 @@ import { RouterView } from 'vue-router'
 import AppBottomNav from '@/components/AppBottomNav.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import AppNotice from '@/shared/ui/AppNotice.vue'
+import ImageViewerModal from '@/shared/ui/ImageViewerModal.vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 
 const knowledgeBaseStore = useKnowledgeBaseStore()
@@ -33,5 +34,6 @@ onMounted(() => {
       </main>
       <AppBottomNav />
     </div>
+    <ImageViewerModal />
   </div>
 </template>

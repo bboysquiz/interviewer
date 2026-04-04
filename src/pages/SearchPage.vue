@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 
+import { openImageViewer } from '@/features/images/imageViewer'
 import { buildApiUrl } from '@/services/client/http'
 import { knowledgeBaseApi } from '@/services/client/knowledgeBaseApi'
 import { highlightText } from '@/shared/lib/highlight'
@@ -351,6 +352,20 @@ const highlightedText = (value: string): string =>
 const attachmentPreviewUrl = (storagePath: string | null): string | null =>
   storagePath ? buildApiUrl(storagePath) : null
 
+const openSearchPreview = (group: ImageSearchGroup): void => {
+  const previewUrl = attachmentPreviewUrl(group.attachmentStoragePath)
+
+  if (!previewUrl) {
+    return
+  }
+
+  openImageViewer({
+    src: previewUrl,
+    alt: group.attachmentName,
+    title: group.attachmentName,
+  })
+}
+
 onMounted(() => {
   if (!hasLoaded.value) {
     void knowledgeBaseStore.loadCategories()
@@ -621,9 +636,11 @@ onMounted(() => {
         >
           <div class="search-group-card__header">
             <div class="search-group-card__copy">
-              <div
+              <button
                 v-if="attachmentPreviewUrl(group.attachmentStoragePath)"
                 class="search-image-card__preview-wrap"
+                type="button"
+                @click="openSearchPreview(group)"
               >
                 <img
                   class="search-image-card__preview"
@@ -631,7 +648,7 @@ onMounted(() => {
                   :alt="group.attachmentName"
                   loading="lazy"
                 />
-              </div>
+              </button>
 
               <h3
                 class="search-group-card__title"
@@ -859,10 +876,14 @@ onMounted(() => {
 
 .search-image-card__preview-wrap {
   margin-bottom: 0.78rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
   overflow: hidden;
   border-radius: 20px;
   background: rgba(240, 229, 215, 0.6);
   box-shadow: 0 10px 20px rgba(71, 50, 24, 0.08);
+  cursor: zoom-in;
 }
 
 .search-image-card__preview {

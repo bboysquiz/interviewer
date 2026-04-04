@@ -23,6 +23,7 @@ const taskLabels = {
   interview_question_generation: 'Генерации вопросов',
   interview_answer_evaluation: 'Проверки ответов',
   image_analysis: 'Анализы скриншотов',
+  note_organization: 'AI-сортировки конспекта',
 } as const
 
 const budgetMetaById = {
@@ -37,6 +38,10 @@ const budgetMetaById = {
   image_analysis: {
     title: 'Осталось анализов скриншотов',
     detail: 'Сколько ещё скриншотов можно прогнать через OCR и описание.',
+  },
+  note_organization: {
+    title: 'Осталось AI-сортировок конспекта',
+    detail: 'Сколько ещё раз можно перегруппировать полотно темы через AI.',
   },
 } as const
 

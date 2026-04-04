@@ -181,8 +181,11 @@ const saveError = ref<string | null>(null)
 const importError = ref<string | null>(null)
 const importSummary = ref<string | null>(null)
 const pendingImportSummary = ref<string | null>(null)
+const organizeError = ref<string | null>(null)
+const organizeSummary = ref<string | null>(null)
 const isSaving = ref(false)
 const isImporting = ref(false)
+const isOrganizing = ref(false)
 const importFolderInput = ref<HTMLInputElement | null>(null)
 const undoStack = ref<NoteFormValues[]>([])
 const previousSnapshot = ref(cloneNoteFormValues(notebookForm.value))
@@ -246,6 +249,11 @@ const isAnyAttachmentRetryRunning = computed(() =>
 const formFingerprint = computed(() => createNoteFormFingerprint(notebookForm.value))
 const isDirty = computed(() => formFingerprint.value !== lastSavedFingerprint.value)
 const canUndo = computed(() => undoStack.value.length > 0 && !isSaving.value)
+const hasMeaningfulNotebookContent = computed(() =>
+  notebookForm.value.blocks.some((block) =>
+    block.type === 'image' ? true : block.text.trim().length > 0,
+  ),
+)
 
 const saveStatusTone = computed<'saved' | 'unsaved' | 'saving' | 'error'>(() => {
   if (isSaving.value) {
@@ -719,6 +727,58 @@ const importAppleNotesFiles = async (files: File[]): Promise<void> => {
   }
 }
 
+const organizeNotebook = async (): Promise<void> => {
+  if (
+    showCategoryNotFound.value ||
+    isSaving.value ||
+    isImporting.value ||
+    isOrganizing.value
+  ) {
+    return
+  }
+
+  organizeError.value = null
+  organizeSummary.value = null
+
+  if (!hasMeaningfulNotebookContent.value) {
+    organizeError.value =
+      'Сначала добавь в тему текст или хотя бы один скриншот, чтобы AI было что группировать.'
+    return
+  }
+
+  if (isDirty.value || !notebookNote.value) {
+    await saveNotebook()
+
+    if (saveError.value || !notebookNote.value) {
+      return
+    }
+  }
+
+  if (!notebookNote.value) {
+    organizeError.value = 'Не удалось подготовить тему к AI-сортировке.'
+    return
+  }
+
+  isOrganizing.value = true
+
+  try {
+    const response = await notesStore.organizeNote(notebookNote.value.id)
+
+    hydrateFormFromNotebook(response.note)
+    organizeSummary.value =
+      response.organized.sectionCount === 1
+        ? 'AI перегруппировал полотно в 1 раздел.'
+        : `AI перегруппировал полотно на ${response.organized.sectionCount} разделов.`
+  } catch (error) {
+    organizeError.value =
+      error instanceof Error
+        ? error.message
+        : 'Не удалось упорядочить конспект через AI.'
+  } finally {
+    isOrganizing.value = false
+  }
+}
+
 const handleImportSelection = async (event: Event): Promise<void> => {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
@@ -753,6 +813,8 @@ watch(
     importError.value = null
     importSummary.value = null
     pendingImportSummary.value = null
+    organizeError.value = null
+    organizeSummary.value = null
     hydrateFormFromNotebook(null)
     void loadNotebook()
   },
@@ -790,6 +852,8 @@ watch(
       return
     }
 
+    organizeError.value = null
+    organizeSummary.value = null
     undoStack.value.push(cloneNoteFormValues(previousSnapshot.value))
 
     if (undoStack.value.length > MAX_UNDO_STEPS) {
@@ -859,9 +923,22 @@ const nowAsIso = (): string => new Date().toISOString()
       />
 
       <button
+        class="app-button app-button--secondary category-notes-page__organize-button"
+        type="button"
+        :disabled="
+          isImporting || isSaving || isOrganizing || !hasMeaningfulNotebookContent
+        "
+        @click="void organizeNotebook()"
+      >
+        {{
+          isOrganizing ? 'Упорядочиваем...' : 'Упорядочить конспект через AI'
+        }}
+      </button>
+
+      <button
         class="app-button app-button--secondary category-notes-page__import-button"
         type="button"
-        :disabled="isImporting || isSaving"
+        :disabled="isImporting || isSaving || isOrganizing"
         @click="void openImportFolderPicker()"
       >
         {{ isImporting ? 'Импортируем...' : 'Импорт из Apple Notes' }}
@@ -875,6 +952,20 @@ const nowAsIso = (): string => new Date().toISOString()
         directory
         multiple
         @change="void handleImportSelection($event)"
+      />
+
+      <AppNotice
+        v-if="organizeError"
+        tone="error"
+        title="AI-сортировка не завершилась"
+        :message="organizeError"
+      />
+
+      <AppNotice
+        v-if="organizeSummary"
+        tone="success"
+        title="Конспект упорядочен"
+        :message="organizeSummary"
       />
 
       <AppNotice
@@ -982,6 +1073,7 @@ const nowAsIso = (): string => new Date().toISOString()
 </template>
 
 <style scoped>
+.category-notes-page__organize-button,
 .category-notes-page__import-button {
   align-self: flex-start;
 }

@@ -14,6 +14,7 @@ export type AiAnalyticsTask =
   | 'image_analysis'
   | 'interview_question_generation'
   | 'interview_answer_evaluation'
+  | 'note_organization'
 
 export type AiAnalyticsChannel = 'text' | 'image'
 
@@ -80,6 +81,7 @@ export interface AiAnalyticsFriendlyBudget {
     | 'question_generation'
     | 'answer_evaluation'
     | 'image_analysis'
+    | 'note_organization'
   channel: AiAnalyticsChannel
   used24h: number
   limit24h: number | null
@@ -111,6 +113,7 @@ export interface AiAnalyticsSnapshot {
 const TASK_ORDER: AiAnalyticsTask[] = [
   'interview_question_generation',
   'interview_answer_evaluation',
+  'note_organization',
   'image_analysis',
 ]
 
@@ -409,6 +412,16 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             imageBudget.limit24h === null
               ? null
               : Math.max(imageBudget.limit24h - imageBudget.used24h, 0),
+        },
+        {
+          id: 'note_organization',
+          channel: 'text',
+          used24h: textBudget.used24h,
+          limit24h: textBudget.limit24h,
+          remaining24h:
+            textBudget.limit24h === null
+              ? null
+              : Math.max(textBudget.limit24h - textBudget.used24h, 0),
         },
       ]
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
+import { openImageViewer } from '@/features/images/imageViewer'
 import {
   createImageBlockFromFile,
   createTextBlock,
@@ -205,6 +206,26 @@ const handleTextInput = (blockId: string, event: Event): void => {
 
 const selectImageBlock = (blockId: string): void => {
   selectedImageBlockId.value = blockId
+}
+
+const openImageBlockViewer = (block: NoteFormImageBlock): void => {
+  selectImageBlock(block.id)
+
+  const previewUrl = attachmentPreviewUrl(block)
+
+  if (!previewUrl) {
+    return
+  }
+
+  const attachment = attachmentForBlock(block)
+  const imageLabel =
+    block.fileName || attachment?.originalFileName || 'Скриншот заметки'
+
+  openImageViewer({
+    src: previewUrl,
+    alt: imageLabel,
+    title: imageLabel,
+  })
 }
 
 const insertImagesAtSelection = (
@@ -493,6 +514,20 @@ const handleImageBackspace = async (
   }
 }
 
+const handleImageKeydown = async (
+  event: KeyboardEvent,
+  blockIndex: number,
+  block: NoteFormImageBlock,
+): Promise<void> => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    openImageBlockViewer(block)
+    return
+  }
+
+  await handleImageBackspace(event, blockIndex)
+}
+
 replaceBlocks(form.value.blocks)
 
 onBeforeUnmount(() => {
@@ -607,8 +642,8 @@ onBeforeUnmount(() => {
             type="button"
             :disabled="isSubmitting"
             @focus="selectImageBlock(block.id)"
-            @click="selectImageBlock(block.id)"
-            @keydown="void handleImageBackspace($event, index)"
+            @click="openImageBlockViewer(block)"
+            @keydown="void handleImageKeydown($event, index, block)"
           >
             <div
               v-if="attachmentPreviewUrl(block)"
@@ -806,7 +841,7 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-radius: 22px;
   background: transparent;
-  cursor: default;
+  cursor: zoom-in;
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease,
