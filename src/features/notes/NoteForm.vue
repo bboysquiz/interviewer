@@ -23,34 +23,47 @@ const form = defineModel<NoteFormValues>({ required: true })
 
 const props = withDefaults(
   defineProps<{
-    submitLabel: string
+    submitLabel?: string
     isSubmitting?: boolean
     errorMessage?: string | null
     cancelLabel?: string
     showCancel?: boolean
+    showSubmit?: boolean
     attachmentsById?: Record<string, Attachment>
     hideTitle?: boolean
     immersive?: boolean
-    contentLabel?: string
-    contentHint?: string
+    contentLabel?: string | null
+    contentHint?: string | null
+    statusLabel?: string | null
+    statusTone?: 'saved' | 'unsaved' | 'saving' | 'error'
+    showUndo?: boolean
+    canUndo?: boolean
+    undoLabel?: string
   }>(),
   {
     isSubmitting: false,
     errorMessage: null,
     cancelLabel: 'Отмена',
     showCancel: false,
+    showSubmit: true,
     attachmentsById: () => ({}),
     hideTitle: false,
     immersive: false,
     contentLabel: 'Содержимое заметки',
     contentHint:
       'Пиши текст в одном полотне, вставляй скриншоты через Ctrl+V или кнопкой снизу. Картинку можно убрать клавишей Backspace.',
+    statusLabel: null,
+    statusTone: 'saved',
+    showUndo: false,
+    canUndo: false,
+    undoLabel: 'Отменить',
   },
 )
 
 const emit = defineEmits<{
   submit: []
   cancel: []
+  undo: []
 }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -60,6 +73,10 @@ const lastSelection = ref<EditorSelectionSnapshot | null>(null)
 const selectedImageBlockId = ref<string | null>(null)
 
 const hasBlocks = computed(() => form.value.blocks.length > 0)
+const showCanvasToolbar = computed(
+  () => Boolean(props.statusLabel) || props.showUndo,
+)
+const showFooterActions = computed(() => props.showSubmit || props.showCancel)
 
 const attachmentForBlock = (block: NoteFormImageBlock): Attachment | null =>
   block.attachmentId ? props.attachmentsById[block.attachmentId] ?? null : null
@@ -414,8 +431,6 @@ const handleEditorBackspace = async (
     return
   }
 
-  revokeBlockPreviewUrl(previousBlock)
-
   const previousTextBlock = form.value.blocks[blockIndex - 2]
 
   if (previousTextBlock?.type === 'text') {
@@ -444,7 +459,6 @@ const handleImageBackspace = async (
   }
 
   event.preventDefault()
-  revokeBlockPreviewUrl(block)
 
   const previousBlock = form.value.blocks[blockIndex - 1]
   const nextBlock = form.value.blocks[blockIndex + 1]
@@ -512,9 +526,9 @@ onBeforeUnmount(() => {
     </label>
 
     <div class="note-form__field">
-      <span class="note-form__label">{{ contentLabel }}</span>
+      <span v-if="contentLabel" class="note-form__label">{{ contentLabel }}</span>
 
-      <p class="note-form__hint">
+      <p v-if="contentHint" class="note-form__hint">
         {{ contentHint }}
       </p>
 
@@ -538,6 +552,26 @@ onBeforeUnmount(() => {
           'note-form__canvas--immersive': immersive,
         }"
       >
+        <div v-if="showCanvasToolbar" class="note-form__canvas-toolbar">
+          <span
+            v-if="statusLabel"
+            class="note-form__status-pill"
+            :class="`note-form__status-pill--${statusTone}`"
+          >
+            {{ statusLabel }}
+          </span>
+
+          <button
+            v-if="showUndo"
+            class="app-button app-button--secondary note-form__undo-button"
+            type="button"
+            :disabled="isSubmitting || !canUndo"
+            @click="emit('undo')"
+          >
+            {{ undoLabel }}
+          </button>
+        </div>
+
         <article
           v-for="(block, index) in form.blocks"
           :key="block.id"
@@ -612,8 +646,9 @@ onBeforeUnmount(() => {
       {{ errorMessage }}
     </p>
 
-    <div class="note-form__actions">
+    <div v-if="showFooterActions" class="note-form__actions">
       <button
+        v-if="showSubmit"
         class="app-button app-button--primary"
         type="submit"
         :disabled="isSubmitting"
@@ -698,6 +733,42 @@ onBeforeUnmount(() => {
     0 18px 30px rgba(71, 50, 24, 0.06);
 }
 
+.note-form__canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.72rem;
+  padding-bottom: 0.2rem;
+}
+
+.note-form__status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.42rem 0.72rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.1;
+  background: rgba(35, 28, 21, 0.06);
+  color: var(--text-muted);
+}
+
+.note-form__status-pill--saved {
+  background: rgba(31, 109, 90, 0.12);
+  color: var(--accent-strong);
+}
+
+.note-form__status-pill--saving {
+  background: rgba(207, 116, 64, 0.12);
+  color: var(--highlight);
+}
+
+.note-form__status-pill--unsaved,
+.note-form__status-pill--error {
+  background: rgba(181, 65, 59, 0.12);
+  color: #9f3b35;
+}
+
 .note-form__canvas--immersive {
   min-height: 26rem;
 }
@@ -774,6 +845,11 @@ onBeforeUnmount(() => {
   align-self: flex-start;
   margin-top: 0.15rem;
   padding-inline: 0.72rem;
+}
+
+.note-form__undo-button {
+  min-height: 2.5rem;
+  padding-inline: 0.78rem;
 }
 
 .note-form__error {

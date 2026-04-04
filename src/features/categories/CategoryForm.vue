@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { CATEGORY_COLOR_PRESETS } from '@/features/categories/categoryForm'
 import type { CategoryFormValues } from '@/features/categories/categoryForm'
 
 const form = defineModel<CategoryFormValues>({ required: true })
@@ -24,13 +23,6 @@ const emit = defineEmits<{
   submit: []
   cancel: []
 }>()
-
-const setPresetColor = (color: string): void => {
-  form.value = {
-    ...form.value,
-    color,
-  }
-}
 </script>
 
 <template>
@@ -55,63 +47,9 @@ const setPresetColor = (color: string): void => {
         class="category-form__textarea"
         name="description"
         rows="3"
-        placeholder="Коротко опиши, что будет внутри категории"
+        placeholder="Коротко опиши, что будет внутри темы"
       />
     </label>
-
-    <div class="category-form__field">
-      <span class="category-form__label">Цвет</span>
-      <input
-        v-model.trim="form.color"
-        class="category-form__input"
-        type="text"
-        name="color"
-        placeholder="#6cbf93"
-        maxlength="16"
-      />
-
-      <div class="category-form__chips">
-        <button
-          v-for="color in CATEGORY_COLOR_PRESETS"
-          :key="color"
-          type="button"
-          class="category-form__color-chip"
-          :class="{
-            'category-form__color-chip--active': form.color === color,
-          }"
-          :style="{ '--chip-color': color }"
-          @click="setPresetColor(color)"
-        >
-          {{ color }}
-        </button>
-      </div>
-    </div>
-
-    <div class="category-form__grid">
-      <label class="category-form__field">
-        <span class="category-form__label">Короткая метка</span>
-        <input
-          v-model.trim="form.icon"
-          class="category-form__input"
-          type="text"
-          name="icon"
-          placeholder="JS"
-          maxlength="4"
-        />
-      </label>
-
-      <label class="category-form__field">
-        <span class="category-form__label">Порядок</span>
-        <input
-          v-model.trim="form.sortOrder"
-          class="category-form__input"
-          type="text"
-          name="sortOrder"
-          inputmode="numeric"
-          placeholder="0"
-        />
-      </label>
-    </div>
 
     <p v-if="errorMessage" class="category-form__error">
       {{ errorMessage }}
@@ -185,45 +123,6 @@ const setPresetColor = (color: string): void => {
   background: var(--surface-strong);
 }
 
-.category-form__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.72rem;
-}
-
-.category-form__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.48rem;
-}
-
-.category-form__color-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.36rem;
-  padding: 0.44rem 0.66rem;
-  border: 1px solid rgba(180, 154, 123, 0.28);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.62);
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-.category-form__color-chip::before {
-  content: '';
-  width: 0.72rem;
-  height: 0.72rem;
-  border-radius: 999px;
-  background: var(--chip-color);
-}
-
-.category-form__color-chip--active {
-  border-color: var(--accent);
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
 .category-form__error {
   margin: 0;
   padding: 0.7rem 0.82rem;
@@ -237,11 +136,5 @@ const setPresetColor = (color: string): void => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
-}
-
-@media (max-width: 360px) {
-  .category-form__grid {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

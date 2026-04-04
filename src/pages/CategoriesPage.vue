@@ -26,41 +26,29 @@ const editError = ref<string | null>(null)
 const deleteError = ref<string | null>(null)
 
 const isCreating = ref(false)
+const isCreateFormVisible = ref(false)
 const updatingCategoryId = ref<string | null>(null)
 const deletingCategoryId = ref<string | null>(null)
 const editingCategoryId = ref<string | null>(null)
 const confirmingDeleteId = ref<string | null>(null)
+
 const categoryPendingDelete = computed(
   () =>
     categories.value.find((category) => category.id === confirmingDeleteId.value) ??
     null,
 )
 
-const categoryCountLabel = computed(() => {
-  const count = categories.value.length
-
-  if (count === 1) {
-    return '1 категория'
-  }
-
-  if (count >= 2 && count <= 4) {
-    return `${count} категории`
-  }
-
-  return `${count} категорий`
-})
-
-const categorySummary = computed(() => {
-  if (isLoading.value && !hasLoaded.value) {
-    return 'Загружаем категории с backend...'
-  }
-
-  return 'Создавай темы, редактируй их прямо в списке и держи структуру базы знаний под контролем.'
-})
-
 const resetCreateForm = (): void => {
   createForm.value = createEmptyCategoryForm()
   createError.value = null
+}
+
+const toggleCreateForm = (): void => {
+  isCreateFormVisible.value = !isCreateFormVisible.value
+
+  if (!isCreateFormVisible.value) {
+    resetCreateForm()
+  }
 }
 
 const cancelEdit = (): void => {
@@ -96,7 +84,7 @@ const submitCreate = async (): Promise<void> => {
   createError.value = null
 
   if (!createForm.value.name.trim()) {
-    createError.value = 'Укажи название категории.'
+    createError.value = 'Укажи название темы.'
     return
   }
 
@@ -107,9 +95,10 @@ const submitCreate = async (): Promise<void> => {
       toCategoryMutationInput(createForm.value),
     )
     resetCreateForm()
+    isCreateFormVisible.value = false
   } catch (error) {
     createError.value =
-      error instanceof Error ? error.message : 'Не удалось создать категорию.'
+      error instanceof Error ? error.message : 'Не удалось создать тему.'
   } finally {
     isCreating.value = false
   }
@@ -125,7 +114,7 @@ const submitEdit = async (): Promise<void> => {
   editError.value = null
 
   if (!editForm.value.name.trim()) {
-    editError.value = 'Название категории не должно быть пустым.'
+    editError.value = 'Название темы не должно быть пустым.'
     return
   }
 
@@ -139,7 +128,7 @@ const submitEdit = async (): Promise<void> => {
     cancelEdit()
   } catch (error) {
     editError.value =
-      error instanceof Error ? error.message : 'Не удалось обновить категорию.'
+      error instanceof Error ? error.message : 'Не удалось обновить тему.'
   } finally {
     updatingCategoryId.value = null
   }
@@ -158,7 +147,7 @@ const confirmDelete = async (category: Category): Promise<void> => {
     }
   } catch (error) {
     deleteError.value =
-      error instanceof Error ? error.message : 'Не удалось удалить категорию.'
+      error instanceof Error ? error.message : 'Не удалось удалить тему.'
   } finally {
     deletingCategoryId.value = null
   }
@@ -171,32 +160,29 @@ const reloadCategories = async (): Promise<void> => {
 
 <template>
   <div class="page-stack categories-page">
-    <SurfaceCard eyebrow="Управление" title="CRUD для категорий">
-      <p class="lead">{{ categorySummary }}</p>
-
-      <AppNotice
-        v-if="isLoading && !hasLoaded"
-        tone="loading"
-        title="Подключаем категории"
-        message="Загружаем список тем с backend и обновляем счетчики заметок."
-      />
-
+    <SurfaceCard title="Темы">
       <div class="categories-page__toolbar">
-        <span class="tag">{{ categoryCountLabel }}</span>
         <button
-          class="app-button app-button--secondary"
+          class="app-button app-button--primary"
           type="button"
-          :disabled="isLoading"
-          @click="reloadCategories"
+          :disabled="isCreating"
+          @click="toggleCreateForm"
         >
-          {{ isLoading ? 'Обновляем...' : 'Обновить список' }}
+          {{ isCreateFormVisible ? 'Скрыть форму' : 'Добавить тему' }}
         </button>
       </div>
 
       <AppNotice
+        v-if="isLoading && !hasLoaded"
+        tone="loading"
+        title="Подключаем темы"
+        message="Загружаем список тем с сервера."
+      />
+
+      <AppNotice
         v-if="loadError"
         tone="error"
-        title="Не удалось обновить категории"
+        title="Не удалось обновить темы"
         :message="loadError"
       >
         <template #actions>
@@ -210,21 +196,24 @@ const reloadCategories = async (): Promise<void> => {
           </button>
         </template>
       </AppNotice>
+
+      <div v-if="isCreateFormVisible" class="categories-page__create-form">
+        <CategoryForm
+          v-model="createForm"
+          submit-label="Создать тему"
+          :is-submitting="isCreating"
+          :error-message="createError"
+          show-cancel
+          cancel-label="Скрыть"
+          @submit="submitCreate"
+          @cancel="toggleCreateForm"
+        />
+      </div>
     </SurfaceCard>
 
-    <SurfaceCard eyebrow="Новая категория" title="Добавить тему">
-      <CategoryForm
-        v-model="createForm"
-        submit-label="Создать категорию"
-        :is-submitting="isCreating"
-        :error-message="createError"
-        @submit="submitCreate"
-      />
-    </SurfaceCard>
-
-    <SurfaceCard eyebrow="Список" title="Текущие категории">
+    <SurfaceCard title="Список тем">
       <div v-if="!categories.length" class="categories-page__empty">
-        Список пока пуст. Создай первую категорию, чтобы начать наполнять базу знаний.
+        Тем пока нет. Добавь первую тему, чтобы начать вести конспект.
       </div>
 
       <div v-else class="categories-page__list">
@@ -237,28 +226,11 @@ const reloadCategories = async (): Promise<void> => {
           }"
         >
           <div class="category-card__head">
-            <div class="category-card__identity">
-              <span
-                class="category-card__swatch"
-                :style="{ backgroundColor: category.color ?? '#d8cab6' }"
-              />
-
-              <div class="category-card__copy">
-                <div class="category-card__title-row">
-                  <h3 class="category-card__title">{{ category.name }}</h3>
-                  <span class="tag">{{ category.icon || category.slug }}</span>
-                </div>
-
-                <p class="category-card__description">
-                  {{ category.description || 'Описание пока не заполнено.' }}
-                </p>
-              </div>
-            </div>
-
-            <div class="tag-row category-card__meta">
-              <span class="tag">{{ category.noteCount }} заметок</span>
-              <span class="tag">{{ category.attachmentCount }} файлов</span>
-              <span class="tag">Порядок: {{ category.sortOrder }}</span>
+            <div class="category-card__copy">
+              <h3 class="category-card__title">{{ category.name }}</h3>
+              <p class="category-card__description">
+                {{ category.description || 'Описание пока не заполнено.' }}
+              </p>
             </div>
           </div>
 
@@ -272,7 +244,7 @@ const reloadCategories = async (): Promise<void> => {
                 },
               }"
             >
-              Заметки
+              Открыть
             </RouterLink>
 
             <button
@@ -308,7 +280,6 @@ const reloadCategories = async (): Promise<void> => {
               @cancel="cancelEdit"
             />
           </div>
-
         </article>
       </div>
     </SurfaceCard>
@@ -316,13 +287,9 @@ const reloadCategories = async (): Promise<void> => {
     <ConfirmSheet
       v-if="categoryPendingDelete"
       :open="true"
-      title="Удалить категорию?"
-      :description="
-        categoryPendingDelete.noteCount > 0 || categoryPendingDelete.attachmentCount > 0
-          ? `Категория «${categoryPendingDelete.name}» будет удалена вместе со связанными заметками и вложениями.`
-          : `Категория «${categoryPendingDelete.name}» будет удалена без возможности восстановления.`
-      "
-      confirm-label="Удалить категорию"
+      title="Удалить тему?"
+      :description="`Тема «${categoryPendingDelete.name}» будет удалена вместе с её конспектом и вложениями.`"
+      confirm-label="Удалить тему"
       :is-submitting="deletingCategoryId === categoryPendingDelete.id"
       :error-message="deleteError"
       @cancel="closeDeleteConfirmation"
@@ -336,20 +303,10 @@ const reloadCategories = async (): Promise<void> => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.72rem;
-  align-items: center;
-  justify-content: space-between;
 }
 
-.categories-page__feedback {
-  margin: 0;
-  padding: 0.78rem 0.9rem;
-  border-radius: 16px;
-  font-size: 0.88rem;
-}
-
-.categories-page__feedback--error {
-  background: rgba(181, 65, 59, 0.12);
-  color: #9f3b35;
+.categories-page__create-form {
+  padding-top: 0.2rem;
 }
 
 .categories-page__empty {
@@ -388,42 +345,13 @@ const reloadCategories = async (): Promise<void> => {
   box-shadow: 0 16px 28px rgba(31, 109, 90, 0.08);
 }
 
-.category-card__head {
-  display: flex;
-  flex-direction: column;
-  gap: 0.78rem;
-}
-
-.category-card__identity {
-  display: flex;
-  gap: 0.78rem;
-  align-items: flex-start;
-}
-
-.category-card__swatch {
-  flex-shrink: 0;
-  width: 1rem;
-  height: 1rem;
-  margin-top: 0.26rem;
-  border-radius: 999px;
-  box-shadow: 0 0 0 0.32rem rgba(35, 28, 21, 0.05);
-}
-
 .category-card__copy {
   min-width: 0;
   flex: 1;
 }
 
-.category-card__title-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-  align-items: center;
-  margin-bottom: 0.2rem;
-}
-
 .category-card__title {
-  margin: 0;
+  margin: 0 0 0.2rem;
   font-size: 1rem;
   line-height: 1.2;
 }
@@ -432,10 +360,6 @@ const reloadCategories = async (): Promise<void> => {
   margin: 0;
   color: var(--text-muted);
   font-size: 0.92rem;
-}
-
-.category-card__meta {
-  margin-top: 0;
 }
 
 .category-card__actions {

@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
+import {
+  clearContextualFooter,
+  setContextualFooter,
+} from '@/features/navigation/contextualFooter'
 import NoteForm from '@/features/notes/NoteForm.vue'
 import type { ImportedAppleNoteDraft } from '@/features/notes/appleNotesImport'
 import { parseAppleNotesImportFiles } from '@/features/notes/appleNotesImport'
 import {
   applyUploadedAttachmentsToBlocks,
+  cloneNoteFormValues,
   createEmptyNoteForm,
+  createNoteFormFingerprint,
   createNoteFormFromNote,
   createTextBlock,
   revokeFormPreviewUrls,
@@ -43,6 +49,9 @@ interface FailedAttachmentReasonSummary {
   label: string
   count: number
 }
+
+const AUTOSAVE_DELAY_MS = 2000
+const MAX_UNDO_STEPS = 40
 
 const normalizeProcessingError = (
   value: string | null,
@@ -123,6 +132,7 @@ const normalizeProcessingError = (
 }
 
 const route = useRoute()
+const router = useRouter()
 const knowledgeBaseStore = useKnowledgeBaseStore()
 const notesStore = useNotesStore()
 const attachmentsStore = useAttachmentsStore()
@@ -170,37 +180,21 @@ const notebookForm = ref(createEmptyNoteForm())
 const saveError = ref<string | null>(null)
 const importError = ref<string | null>(null)
 const importSummary = ref<string | null>(null)
+const pendingImportSummary = ref<string | null>(null)
 const isSaving = ref(false)
 const isImporting = ref(false)
 const importFolderInput = ref<HTMLInputElement | null>(null)
+const undoStack = ref<NoteFormValues[]>([])
+const previousSnapshot = ref(cloneNoteFormValues(notebookForm.value))
+const lastSavedFingerprint = ref(createNoteFormFingerprint(notebookForm.value))
+const lastSavedAt = ref<string | null>(null)
+const isApplyingSnapshot = ref(false)
 let analysisPollHandle: ReturnType<typeof setInterval> | null = null
-
-const categorySummary = computed(() => {
-  if (!category.value) {
-    return 'В теме будет один общий конспект: текст и скриншоты в одном длинном полотне.'
-  }
-
-  return (
-    category.value.description ||
-    'Открой тему и веди один общий конспект, как в обычных заметках.'
-  )
-})
+let autosaveHandle: ReturnType<typeof setTimeout> | null = null
 
 const showCategoryNotFound = computed(
   () => hasLoaded.value && !category.value && !isLoading.value,
 )
-
-const notebookMeta = computed(() => {
-  if (!notebookNote.value) {
-    return null
-  }
-
-  return {
-    updatedAt: notebookNote.value.updatedAt,
-    createdAt: notebookNote.value.createdAt,
-    attachmentCount: notebookAttachments.value.length,
-  }
-})
 
 const attachmentsInAnalysis = computed(() =>
   notebookAttachments.value.filter(
@@ -215,42 +209,6 @@ const failedAttachments = computed(() =>
     (attachment) => attachment.processingStatus === 'failed',
   ),
 )
-
-const isAnalysisPollingActive = computed(
-  () => attachmentsInAnalysis.value.length > 0,
-)
-
-const analysisStatusTitle = computed(() => {
-  const count = attachmentsInAnalysis.value.length
-
-  if (count <= 1) {
-    return 'AI анализирует скриншот темы'
-  }
-
-  return `AI анализирует ${count} скриншотов темы`
-})
-
-const analysisStatusMessage = computed(() =>
-  attachmentsInAnalysis.value.some(
-    (attachment) => attachment.processingStatus === 'processing',
-  )
-    ? 'Извлекаем текст и краткое описание из скриншотов. Когда анализ завершится, вопросы начнут учитывать и их содержимое.'
-    : 'Скриншоты уже прикреплены к теме и ждут своей очереди на анализ.',
-)
-
-const failedAnalysisMessage = computed(() => {
-  const count = failedAttachments.value.length
-
-  if (!count) {
-    return null
-  }
-
-  if (count === 1) {
-    return 'Один скриншот темы не прошёл OCR/AI-анализ. Его можно переобработать.'
-  }
-
-  return `Не удалось обработать ${count} скриншотов темы. Пока они не будут переанализированы, вопросы будут строиться в основном по тексту.`
-})
 
 const failedAttachmentReasons = computed<FailedAttachmentReasonSummary[]>(() => {
   const groupedReasons = new Map<string, FailedAttachmentReasonSummary>()
@@ -285,18 +243,164 @@ const isAnyAttachmentRetryRunning = computed(() =>
   ),
 )
 
-const buildNotebookTitle = (): string =>
-  category.value?.name.trim() || 'Тема'
+const formFingerprint = computed(() => createNoteFormFingerprint(notebookForm.value))
+const isDirty = computed(() => formFingerprint.value !== lastSavedFingerprint.value)
+const canUndo = computed(() => undoStack.value.length > 0 && !isSaving.value)
+
+const saveStatusTone = computed<'saved' | 'unsaved' | 'saving' | 'error'>(() => {
+  if (isSaving.value) {
+    return 'saving'
+  }
+
+  if (saveError.value) {
+    return 'error'
+  }
+
+  return isDirty.value ? 'unsaved' : 'saved'
+})
+
+const saveStatusLabel = computed(() => {
+  if (isSaving.value) {
+    return 'Сохраняем...'
+  }
+
+  if (saveError.value || isDirty.value) {
+    return 'Не сохранено'
+  }
+
+  if (lastSavedAt.value) {
+    return `Сохранено ${formatDateTime(lastSavedAt.value)}`
+  }
+
+  return 'Сохранено'
+})
+
+const analysisStatusTitle = computed(() => {
+  const count = attachmentsInAnalysis.value.length
+
+  if (count <= 1) {
+    return 'AI анализирует скриншот темы'
+  }
+
+  return `AI анализирует ${count} скриншотов темы`
+})
+
+const analysisStatusMessage = computed(() =>
+  attachmentsInAnalysis.value.some(
+    (attachment) => attachment.processingStatus === 'processing',
+  )
+    ? 'Извлекаем текст и краткое описание из скриншотов. Когда анализ завершится, вопросы начнут учитывать и их содержимое.'
+    : 'Скриншоты уже прикреплены к теме и ждут своей очереди на анализ.',
+)
+
+const failedAnalysisMessage = computed(() => {
+  const count = failedAttachments.value.length
+
+  if (!count) {
+    return null
+  }
+
+  if (count === 1) {
+    return 'Один скриншот темы не прошёл анализ. Его можно переобработать.'
+  }
+
+  return `Не удалось обработать ${count} скриншотов темы. Пока они не будут переанализированы, вопросы будут строиться в основном по тексту.`
+})
+
+const buildNotebookTitle = (): string => category.value?.name.trim() || 'Тема'
 
 const buildEmptyNotebookForm = (): NoteFormValues => ({
   ...createEmptyNoteForm(),
   title: buildNotebookTitle(),
 })
 
+const stopAutosave = (): void => {
+  if (autosaveHandle) {
+    clearTimeout(autosaveHandle)
+    autosaveHandle = null
+  }
+}
+
+const stopAnalysisPolling = (): void => {
+  if (analysisPollHandle) {
+    clearInterval(analysisPollHandle)
+    analysisPollHandle = null
+  }
+}
+
+const startAnalysisPolling = (): void => {
+  stopAnalysisPolling()
+
+  if (!notebookNote.value || attachmentsInAnalysis.value.length === 0) {
+    return
+  }
+
+  analysisPollHandle = setInterval(() => {
+    void attachmentsStore.loadAttachmentsByNote(notebookNote.value?.id ?? '', {
+      force: true,
+    })
+  }, 4000)
+}
+
+const applyFormSnapshot = (
+  nextValue: NoteFormValues,
+  options: {
+    markAsSaved?: boolean
+    savedAt?: string | null
+    resetUndo?: boolean
+    revokeCurrentPreviewUrls?: boolean
+  } = {},
+): void => {
+  stopAutosave()
+
+  isApplyingSnapshot.value = true
+
+  if (options.revokeCurrentPreviewUrls) {
+    revokeFormPreviewUrls(notebookForm.value)
+  }
+
+  notebookForm.value = cloneNoteFormValues(nextValue)
+  previousSnapshot.value = cloneNoteFormValues(notebookForm.value)
+
+  if (options.markAsSaved) {
+    lastSavedFingerprint.value = createNoteFormFingerprint(notebookForm.value)
+    lastSavedAt.value = options.savedAt ?? nowAsIso()
+    saveError.value = null
+  }
+
+  if (options.resetUndo) {
+    undoStack.value = []
+  }
+
+  isApplyingSnapshot.value = false
+}
+
 const hydrateFormFromNotebook = (note: Note | null): void => {
-  revokeFormPreviewUrls(notebookForm.value)
-  notebookForm.value = note ? createNoteFormFromNote(note) : buildEmptyNotebookForm()
-  notebookForm.value.title = buildNotebookTitle()
+  const nextValue = note ? createNoteFormFromNote(note) : buildEmptyNotebookForm()
+  nextValue.title = buildNotebookTitle()
+
+  applyFormSnapshot(nextValue, {
+    markAsSaved: true,
+    savedAt: note?.updatedAt ?? null,
+    resetUndo: true,
+    revokeCurrentPreviewUrls: true,
+  })
+}
+
+const syncHeaderContext = (): void => {
+  if (!category.value) {
+    clearContextualFooter()
+    return
+  }
+
+  setContextualFooter({
+    title: category.value.name,
+    onBack: () => {
+      void router.push({
+        name: 'categories',
+      })
+    },
+  })
 }
 
 const loadNotebook = async (force = false): Promise<void> => {
@@ -315,65 +419,6 @@ const loadNotebook = async (force = false): Promise<void> => {
     // The page shows the stored error state.
   }
 }
-
-const stopAnalysisPolling = (): void => {
-  if (analysisPollHandle) {
-    clearInterval(analysisPollHandle)
-    analysisPollHandle = null
-  }
-}
-
-const startAnalysisPolling = (): void => {
-  stopAnalysisPolling()
-
-  if (!notebookNote.value || !isAnalysisPollingActive.value) {
-    return
-  }
-
-  analysisPollHandle = setInterval(() => {
-    void attachmentsStore.loadAttachmentsByNote(notebookNote.value?.id ?? '', {
-      force: true,
-    })
-  }, 4000)
-}
-
-watch(
-  categoryId,
-  () => {
-    saveError.value = null
-    importError.value = null
-    importSummary.value = null
-    hydrateFormFromNotebook(null)
-    void loadNotebook()
-  },
-  { immediate: true },
-)
-
-watch(
-  [() => notebookNote.value?.id ?? null, () => category.value?.name ?? ''],
-  () => {
-    hydrateFormFromNotebook(notebookNote.value)
-  },
-  { immediate: true },
-)
-
-onBeforeUnmount(() => {
-  stopAnalysisPolling()
-  revokeFormPreviewUrls(notebookForm.value)
-})
-
-watch(
-  isAnalysisPollingActive,
-  (isActive) => {
-    if (isActive) {
-      startAnalysisPolling()
-      return
-    }
-
-    stopAnalysisPolling()
-  },
-  { immediate: true },
-)
 
 const ensureUploadedBlocksPersisted = async (
   noteId: string,
@@ -416,21 +461,22 @@ const ensureUploadedBlocksPersisted = async (
   }
 }
 
+const maybeCommitImportSummary = (): void => {
+  if (!pendingImportSummary.value) {
+    return
+  }
+
+  importSummary.value = pendingImportSummary.value
+  pendingImportSummary.value = null
+}
+
 const saveNotebook = async (): Promise<void> => {
+  if (!categoryId.value || showCategoryNotFound.value) {
+    return
+  }
+
   saveError.value = null
-  importSummary.value = null
   notebookForm.value.title = buildNotebookTitle()
-
-  if (!categoryId.value) {
-    saveError.value = 'Не удалось определить тему.'
-    return
-  }
-
-  if (false) {
-    saveError.value = 'Добавь текст или хотя бы один скриншот.'
-    return
-  }
-
   isSaving.value = true
 
   try {
@@ -454,6 +500,7 @@ const saveNotebook = async (): Promise<void> => {
         hydrateFormFromNotebook(createdNote)
       }
 
+      maybeCommitImportSummary()
       return
     }
 
@@ -467,6 +514,7 @@ const saveNotebook = async (): Promise<void> => {
     )
     await attachmentsStore.loadAttachmentsByNote(notebookNote.value.id, { force: true })
     hydrateFormFromNotebook(updatedNote)
+    maybeCommitImportSummary()
   } catch (error) {
     saveError.value =
       error instanceof Error ? error.message : 'Не удалось сохранить тему.'
@@ -475,8 +523,21 @@ const saveNotebook = async (): Promise<void> => {
   }
 }
 
-const reloadNotebook = async (): Promise<void> => {
-  await loadNotebook(true)
+const triggerAutosave = (): void => {
+  stopAutosave()
+
+  if (!isDirty.value || showCategoryNotFound.value) {
+    return
+  }
+
+  autosaveHandle = setTimeout(() => {
+    if (isSaving.value) {
+      triggerAutosave()
+      return
+    }
+
+    void saveNotebook()
+  }, AUTOSAVE_DELAY_MS)
 }
 
 const refreshAttachmentStatuses = async (): Promise<void> => {
@@ -522,7 +583,7 @@ const openImportFolderPicker = async (): Promise<void> => {
 
     importError.value =
       error instanceof Error
-        ? (error as Error).message
+        ? error.message
         : 'Не удалось открыть папку экспорта Apple Notes.'
   }
 }
@@ -565,39 +626,6 @@ const collectDirectoryFiles = async (
   return files
 }
 
-const importAppleNotesFiles = async (files: File[]): Promise<void> => {
-  if (files.length === 0) {
-    return
-  }
-
-  importError.value = null
-  importSummary.value = null
-
-  if (!categoryId.value) {
-    importError.value = 'Сначала открой нужную тему.'
-    return
-  }
-
-  isImporting.value = true
-
-  try {
-    const drafts = await parseAppleNotesImportFiles(files)
-    notebookForm.value = appendImportedDrafts(notebookForm.value, drafts)
-    await saveNotebook()
-    importSummary.value =
-      drafts.length === 1
-        ? 'Импортирована 1 заметка из Apple Notes в общий конспект темы.'
-        : `Импортировано ${drafts.length} заметок из Apple Notes в общий конспект темы.`
-  } catch (error) {
-    importError.value =
-      error instanceof Error
-        ? (error as Error).message
-        : 'Не удалось импортировать заметки из Apple Notes.'
-  } finally {
-    isImporting.value = false
-  }
-}
-
 const appendImportedDrafts = (
   currentForm: NoteFormValues,
   drafts: ImportedAppleNoteDraft[],
@@ -627,6 +655,38 @@ const appendImportedDrafts = (
   }
 }
 
+const importAppleNotesFiles = async (files: File[]): Promise<void> => {
+  if (files.length === 0) {
+    return
+  }
+
+  importError.value = null
+  importSummary.value = null
+
+  if (!categoryId.value) {
+    importError.value = 'Сначала открой нужную тему.'
+    return
+  }
+
+  isImporting.value = true
+
+  try {
+    const drafts = await parseAppleNotesImportFiles(files)
+    notebookForm.value = appendImportedDrafts(notebookForm.value, drafts)
+    pendingImportSummary.value =
+      drafts.length === 1
+        ? 'Импортирована 1 заметка из Apple Notes в общий конспект темы.'
+        : `Импортировано ${drafts.length} заметок из Apple Notes в общий конспект темы.`
+  } catch (error) {
+    importError.value =
+      error instanceof Error
+        ? error.message
+        : 'Не удалось импортировать заметки из Apple Notes.'
+  } finally {
+    isImporting.value = false
+  }
+}
+
 const handleImportSelection = async (event: Event): Promise<void> => {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
@@ -638,120 +698,141 @@ const handleImportSelection = async (event: Event): Promise<void> => {
 
   await importAppleNotesFiles(files)
   input.value = ''
-  return
-  /*
+}
 
-  importError.value = null
-  importSummary.value = null
+const undoLastChange = (): void => {
+  const snapshot = undoStack.value.pop()
 
-  if (!categoryId.value) {
-    importError.value = 'Сначала открой нужную тему.'
-    input.value = ''
+  if (!snapshot) {
     return
   }
 
-  isImporting.value = true
+  applyFormSnapshot(snapshot)
 
-  try {
-    const drafts = await parseAppleNotesImportFiles(files)
-    notebookForm.value = appendImportedDrafts(notebookForm.value, drafts)
-    await saveNotebook()
-    importSummary.value =
-      drafts.length === 1
-        ? 'Импортирован 1 файл из Apple Notes в общий конспект темы.'
-        : `Импортировано ${drafts.length} файлов из Apple Notes в общий конспект темы.`
-  } catch (error) {
-    importError.value =
-      error instanceof Error
-        ? error.message
-        : 'Не удалось импортировать заметки из Apple Notes.'
-  } finally {
-    isImporting.value = false
-    input.value = ''
+  if (isDirty.value) {
+    triggerAutosave()
   }
-  */
 }
+
+watch(
+  categoryId,
+  () => {
+    saveError.value = null
+    importError.value = null
+    importSummary.value = null
+    pendingImportSummary.value = null
+    hydrateFormFromNotebook(null)
+    void loadNotebook()
+  },
+  { immediate: true },
+)
+
+watch(
+  [() => category.value?.name ?? '', () => notebookNote.value?.updatedAt ?? null],
+  () => {
+    syncHeaderContext()
+    hydrateFormFromNotebook(notebookNote.value)
+  },
+  { immediate: true },
+)
+
+watch(
+  formFingerprint,
+  (nextFingerprint, previousFingerprint) => {
+    if (!previousFingerprint) {
+      previousSnapshot.value = cloneNoteFormValues(notebookForm.value)
+      return
+    }
+
+    if (isApplyingSnapshot.value || nextFingerprint === previousFingerprint) {
+      previousSnapshot.value = cloneNoteFormValues(notebookForm.value)
+      return
+    }
+
+    undoStack.value.push(cloneNoteFormValues(previousSnapshot.value))
+
+    if (undoStack.value.length > MAX_UNDO_STEPS) {
+      undoStack.value.shift()
+    }
+
+    previousSnapshot.value = cloneNoteFormValues(notebookForm.value)
+    saveError.value = null
+    triggerAutosave()
+  },
+)
+
+watch(
+  () => attachmentsInAnalysis.value.length > 0,
+  (isActive) => {
+    if (isActive) {
+      startAnalysisPolling()
+      return
+    }
+
+    stopAnalysisPolling()
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  stopAutosave()
+  stopAnalysisPolling()
+  clearContextualFooter()
+  revokeFormPreviewUrls(notebookForm.value)
+})
+
+const nowAsIso = (): string => new Date().toISOString()
 </script>
 
 <template>
   <div class="page-stack category-notes-page">
-    <SurfaceCard eyebrow="Тема" title="Единый конспект">
-      <div class="category-notes-page__head">
-        <div class="category-notes-page__copy">
-          <RouterLink
-            class="category-notes-page__back"
-            :to="{ name: 'categories' }"
-          >
-            К списку тем
-          </RouterLink>
+    <AppNotice
+      v-if="isLoading && !notebookNote && !loadError"
+      tone="loading"
+      title="Подгружаем тему"
+      message="Проверяем, есть ли уже сохранённый конспект для этой темы."
+    />
 
-          <h2 class="category-notes-page__title">
-            {{ category?.name ?? 'Тема не найдена' }}
-          </h2>
-          <p class="lead">{{ categorySummary }}</p>
-        </div>
+    <AppNotice
+      v-if="loadError"
+      tone="error"
+      title="Не удалось открыть тему"
+      :message="loadError"
+    />
 
-        <div v-if="notebookMeta" class="tag-row category-notes-page__meta">
-          <span class="tag">
-            Обновлено: {{ formatDateTime(notebookMeta.updatedAt) }}
-          </span>
-          <span class="tag">
-            Скриншотов: {{ notebookMeta.attachmentCount }}
-          </span>
-        </div>
-      </div>
-
-      <div class="category-notes-page__toolbar">
-        <button
-          class="app-button app-button--primary"
-          type="button"
-          :disabled="showCategoryNotFound || isSaving || isImporting"
-          @click="void saveNotebook()"
-        >
-          {{ isSaving ? 'Сохраняем...' : 'Сохранить тему' }}
-        </button>
-
-        <button
-          class="app-button app-button--secondary"
-          type="button"
-          :disabled="isLoading || isSaving"
-          @click="void reloadNotebook()"
-        >
-          {{ isLoading ? 'Обновляем...' : 'Перезагрузить' }}
-        </button>
-
-        <button
-          class="app-button app-button--ghost"
-          type="button"
-          :disabled="showCategoryNotFound || isSaving || isImporting"
-          @click="openImportFolderPicker"
-        >
-          {{ isImporting ? 'Импортируем...' : 'Импорт из Apple Notes' }}
-        </button>
-
-        <input
-          ref="importFolderInput"
-          class="category-notes-page__import-input"
-          type="file"
-          webkitdirectory
-          directory
-          multiple
-          @change="void handleImportSelection($event)"
-        />
-      </div>
-
-      <AppNotice
-        v-if="isLoading && !notebookNote && !loadError"
-        tone="loading"
-        title="Подгружаем тему"
-        message="Проверяем, есть ли уже сохранённый конспект для этой темы."
+    <SurfaceCard v-if="!showCategoryNotFound">
+      <NoteForm
+        v-model="notebookForm"
+        :attachments-by-id="attachmentsById"
+        hide-title
+        immersive
+        :show-submit="false"
+        :content-label="null"
+        :content-hint="null"
+        :status-label="saveStatusLabel"
+        :status-tone="saveStatusTone"
+        show-undo
+        :can-undo="canUndo"
+        @undo="undoLastChange"
       />
 
-      <AppNotice
-        v-if="loadError"
-        tone="error"
-        title="Не удалось открыть тему"
-        :message="loadError"
+      <button
+        class="app-button app-button--secondary category-notes-page__import-button"
+        type="button"
+        :disabled="isImporting || isSaving"
+        @click="void openImportFolderPicker()"
+      >
+        {{ isImporting ? 'Импортируем...' : 'Импорт из Apple Notes' }}
+      </button>
+
+      <input
+        ref="importFolderInput"
+        class="category-notes-page__import-input"
+        type="file"
+        webkitdirectory
+        directory
+        multiple
+        @change="void handleImportSelection($event)"
       />
 
       <AppNotice
@@ -765,12 +846,12 @@ const handleImportSelection = async (event: Event): Promise<void> => {
         v-if="areAttachmentsLoading"
         tone="loading"
         title="Обновляем скриншоты"
-        message="Подтягиваем текущие статусы OCR и AI-анализа по вложениям темы."
+        message="Подтягиваем текущие статусы анализа по вложениям темы."
         compact
       />
 
       <AppNotice
-        v-if="isAnalysisPollingActive"
+        v-if="attachmentsInAnalysis.length"
         tone="loading"
         :title="analysisStatusTitle"
         :message="analysisStatusMessage"
@@ -819,17 +900,14 @@ const handleImportSelection = async (event: Event): Promise<void> => {
             :disabled="isAnyAttachmentRetryRunning"
             @click="void retryFailedAnalyses()"
           >
-            {{ isAnyAttachmentRetryRunning ? 'Переанализируем...' : 'Переанализировать скриншоты' }}
+            {{
+              isAnyAttachmentRetryRunning
+                ? 'Переанализируем...'
+                : 'Переанализировать скриншоты'
+            }}
           </button>
         </template>
       </AppNotice>
-
-      <AppNotice
-        v-if="isImporting"
-        tone="loading"
-        title="Импортируем Apple Notes"
-        message="Добавляем экспортированный файл прямо в общий конспект темы."
-      />
 
       <AppNotice
         v-if="importError"
@@ -853,25 +931,7 @@ const handleImportSelection = async (event: Event): Promise<void> => {
       />
     </SurfaceCard>
 
-    <SurfaceCard
-      v-if="!showCategoryNotFound"
-      eyebrow="Конспект"
-      title="Текст и скриншоты в одном поле"
-    >
-      <NoteForm
-        v-model="notebookForm"
-        submit-label="Сохранить тему"
-        :is-submitting="isSaving"
-        :attachments-by-id="attachmentsById"
-        hide-title
-        immersive
-        content-label="Полотно заметки"
-        content-hint="Здесь одно общее полотно заметки. Пиши текст, вставляй скриншоты через Ctrl+V или кнопкой внизу, а картинки удаляй через Backspace."
-        @submit="void saveNotebook()"
-      />
-    </SurfaceCard>
-
-    <SurfaceCard v-else eyebrow="Тема" title="Не найдена">
+    <SurfaceCard v-else title="Тема не найдена">
       <div class="category-notes-page__empty">
         Тема не найдена. Вернись к списку и открой существующую.
       </div>
@@ -880,38 +940,8 @@ const handleImportSelection = async (event: Event): Promise<void> => {
 </template>
 
 <style scoped>
-.category-notes-page__head {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
-
-.category-notes-page__copy {
-  display: flex;
-  flex-direction: column;
-  gap: 0.36rem;
-}
-
-.category-notes-page__back {
-  color: var(--accent);
-  font-size: 0.84rem;
-  font-weight: 700;
-}
-
-.category-notes-page__title {
-  margin: 0;
-  font-size: 1.16rem;
-  line-height: 1.15;
-}
-
-.category-notes-page__meta {
-  margin-top: 0;
-}
-
-.category-notes-page__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
+.category-notes-page__import-button {
+  align-self: flex-start;
 }
 
 .category-notes-page__import-input {

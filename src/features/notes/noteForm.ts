@@ -26,6 +26,25 @@ export interface NoteFormValues {
   blocks: NoteFormBlock[]
 }
 
+export interface NoteFormSnapshot {
+  title: string
+  blocks: Array<
+    | {
+        id: string
+        type: 'text'
+        text: string
+      }
+    | {
+        id: string
+        type: 'image'
+        attachmentId: string | null
+        fileName: string
+        localPreviewUrl: string | null
+        uploadFile: File | null
+      }
+  >
+}
+
 const createFallbackImageFileName = (file: File): string => {
   const extension = file.type.replace(/^image\//, '').split('+')[0] || 'png'
   return `pasted-screenshot-${Date.now()}.${extension}`
@@ -146,6 +165,53 @@ export const createEmptyNoteForm = (): NoteFormValues => ({
   title: '',
   blocks: [createTextBlock()],
 })
+
+export const cloneNoteFormValues = (
+  value: NoteFormValues,
+): NoteFormValues => ({
+  title: value.title,
+  blocks: value.blocks.map((block) =>
+    block.type === 'text'
+      ? {
+          ...block,
+        }
+      : {
+          ...block,
+          attachmentId: block.attachmentId,
+          localPreviewUrl: block.localPreviewUrl,
+          uploadFile: block.uploadFile,
+        },
+  ),
+})
+
+export const createNoteFormFingerprint = (value: NoteFormValues): string =>
+  JSON.stringify({
+    title: value.title,
+    blocks: value.blocks.map((block) =>
+      block.type === 'text'
+        ? {
+            id: block.id,
+            type: block.type,
+            text: block.text,
+          }
+        : {
+            id: block.id,
+            type: block.type,
+            attachmentId: block.attachmentId,
+            fileName: block.fileName,
+            localPreviewUrl: block.localPreviewUrl,
+            uploadFile:
+              block.uploadFile === null
+                ? null
+                : {
+                    name: block.uploadFile.name,
+                    size: block.uploadFile.size,
+                    type: block.uploadFile.type,
+                    lastModified: block.uploadFile.lastModified,
+                  },
+          },
+    ),
+  })
 
 export const createNoteFormFromNote = (note: Note): NoteFormValues => ({
   title: note.title,

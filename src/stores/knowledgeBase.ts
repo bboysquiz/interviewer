@@ -16,8 +16,8 @@ const fallbackCategories: Category[] = [
     slug: 'javascript',
     name: 'JavaScript',
     description: 'Язык, event loop, async-паттерны и ключевые концепции.',
-    color: '#f2d06b',
-    icon: 'JS',
+    color: null,
+    icon: null,
     sortOrder: 0,
     noteIds: [],
     noteCount: 0,
@@ -30,9 +30,9 @@ const fallbackCategories: Category[] = [
     slug: 'vue',
     name: 'Vue',
     description: 'Composition API, компоненты, reactivity и архитектурные заметки.',
-    color: '#6cbf93',
-    icon: 'VU',
-    sortOrder: 1,
+    color: null,
+    icon: null,
+    sortOrder: 0,
     noteIds: [],
     noteCount: 0,
     attachmentCount: 0,
@@ -44,9 +44,9 @@ const fallbackCategories: Category[] = [
     slug: 'git',
     name: 'Git',
     description: 'Команды, ветвление, rebase и сценарии для собеседований.',
-    color: '#df8f67',
-    icon: 'GT',
-    sortOrder: 2,
+    color: null,
+    icon: null,
+    sortOrder: 0,
     noteIds: [],
     noteCount: 0,
     attachmentCount: 0,
@@ -58,9 +58,9 @@ const fallbackCategories: Category[] = [
     slug: 'css',
     name: 'CSS',
     description: 'Layout, каскад, адаптивность и типовые UI-задачи.',
-    color: '#6fa1d8',
-    icon: 'CS',
-    sortOrder: 3,
+    color: null,
+    icon: null,
+    sortOrder: 0,
     noteIds: [],
     noteCount: 0,
     attachmentCount: 0,
@@ -72,9 +72,9 @@ const fallbackCategories: Category[] = [
     slug: 'html',
     name: 'HTML',
     description: 'Семантика, доступность и структура интерфейсов.',
-    color: '#cc785d',
-    icon: 'HT',
-    sortOrder: 4,
+    color: null,
+    icon: null,
+    sortOrder: 0,
     noteIds: [],
     noteCount: 0,
     attachmentCount: 0,
@@ -82,13 +82,7 @@ const fallbackCategories: Category[] = [
 ]
 
 const sortCategories = (value: Category[]): Category[] =>
-  [...value].sort((left, right) => {
-    if (left.sortOrder !== right.sortOrder) {
-      return left.sortOrder - right.sortOrder
-    }
-
-    return left.name.localeCompare(right.name, 'ru')
-  })
+  [...value].sort((left, right) => left.name.localeCompare(right.name, 'ru'))
 
 export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
   const categories = ref<Category[]>(sortCategories(fallbackCategories))
@@ -97,15 +91,6 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
   const loadError = ref<string | null>(null)
 
   const totalCategories = computed(() => categories.value.length)
-  const totalNotes = computed(() =>
-    categories.value.reduce((total, category) => total + category.noteCount, 0),
-  )
-  const totalAttachments = computed(() =>
-    categories.value.reduce(
-      (total, category) => total + category.attachmentCount,
-      0,
-    ),
-  )
 
   const loadCategories = async (): Promise<void> => {
     if (isLoading.value) {
@@ -162,8 +147,6 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
     hasLoaded,
     loadError,
     totalCategories,
-    totalNotes,
-    totalAttachments,
     loadCategories,
     createCategory,
     updateCategory,

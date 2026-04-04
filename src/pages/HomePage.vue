@@ -7,37 +7,19 @@ import SurfaceCard from '@/shared/ui/SurfaceCard.vue'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 
 const knowledgeBaseStore = useKnowledgeBaseStore()
-const {
-  categories,
-  hasLoaded,
-  isLoading,
-  loadError,
-  totalAttachments,
-  totalCategories,
-  totalNotes,
-} =
+const { categories, hasLoaded, isLoading, loadError, totalCategories } =
   storeToRefs(knowledgeBaseStore)
 
 const summaryCards = computed(() => [
   {
-    label: 'Категории',
+    label: 'Темы',
     value: String(totalCategories.value),
-    detail: 'тем в личной базе',
-  },
-  {
-    label: 'Заметки',
-    value: String(totalNotes.value),
-    detail: 'текст для повторения',
-  },
-  {
-    label: 'Вложения',
-    value: String(totalAttachments.value),
-    detail: 'скриншоты и изображения',
+    detail: 'разделов в твоей базе',
   },
   {
     label: 'Поиск',
     value: 'OCR',
-    detail: 'текст внутри картинок',
+    detail: 'умеет читать текст внутри скриншотов',
   },
 ])
 
@@ -45,7 +27,7 @@ const quickScenarios = [
   {
     title: 'Быстрый обзор темы',
     meta: 'Частый сценарий',
-    copy: 'Открыл категорию, пробежался по заметкам и сразу вернулся в навигацию.',
+    copy: 'Открыл категорию, пробежался по конспекту и сразу вернулся в навигацию.',
   },
   {
     title: 'Поиск по фрагменту из скриншота',
@@ -64,17 +46,17 @@ const featuredCategories = computed(() => categories.value.slice(0, 4))
 
 <template>
   <div class="page-stack">
-    <SurfaceCard eyebrow="Обзор" title="Личный knowledge base всегда под рукой">
+    <SurfaceCard eyebrow="Обзор" title="Личная база знаний всегда под рукой">
       <p class="lead">
-        Экран собран mobile-first: сверху быстрый контекст, в центре рабочая
-        зона, снизу постоянная навигация для частых переходов одной рукой.
+        Экран собран mobile-first: сверху быстрый контекст, в центре рабочая зона,
+        снизу постоянная навигация для частых переходов одной рукой.
       </p>
 
       <AppNotice
         v-if="isLoading && !hasLoaded"
         tone="loading"
         title="Подключаем базу знаний"
-        message="Загружаем категории и счетчики, чтобы стартовый экран показал актуальные данные."
+        message="Загружаем категории, чтобы стартовый экран показал актуальные данные."
       />
 
       <AppNotice
@@ -124,10 +106,6 @@ const featuredCategories = computed(() => categories.value.slice(0, 4))
               {{ category.description }}
             </p>
           </div>
-
-          <span class="section-preview__meta">
-            {{ category.noteCount }} заметок
-          </span>
         </article>
       </div>
     </SurfaceCard>
