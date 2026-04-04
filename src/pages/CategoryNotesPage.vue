@@ -314,6 +314,9 @@ const buildEmptyNotebookForm = (): NoteFormValues => ({
   title: buildNotebookTitle(),
 })
 
+const buildNotebookSyncKey = (note: Note | null): string | null =>
+  note ? `${note.id}:${note.updatedAt}` : null
+
 const stopAutosave = (): void => {
   if (autosaveHandle) {
     clearTimeout(autosaveHandle)
@@ -470,34 +473,56 @@ const maybeCommitImportSummary = (): void => {
   pendingImportSummary.value = null
 }
 
+const syncFormFromNotebook = (note: Note | null): void => {
+  if (isSaving.value || isDirty.value) {
+    return
+  }
+
+  hydrateFormFromNotebook(note)
+}
+
 const saveNotebook = async (): Promise<void> => {
   if (!categoryId.value || showCategoryNotFound.value) {
     return
   }
 
   saveError.value = null
-  notebookForm.value.title = buildNotebookTitle()
   isSaving.value = true
+  const saveSnapshot = cloneNoteFormValues(notebookForm.value)
+  const currentNoteId = notebookNote.value?.id ?? null
+
+  saveSnapshot.title = buildNotebookTitle()
+  const saveSnapshotFingerprint = createNoteFormFingerprint(saveSnapshot)
 
   try {
-    if (!notebookNote.value) {
+    if (!currentNoteId) {
       const createdNote = await notesStore.createNote(
-        toCreateNoteInput(categoryId.value, notebookForm.value),
+        toCreateNoteInput(categoryId.value, saveSnapshot),
       )
       const resolvedForm = await ensureUploadedBlocksPersisted(
         createdNote.id,
-        notebookForm.value,
+        saveSnapshot,
       )
 
-      if (resolvedForm !== notebookForm.value) {
-        const updatedNote = await notesStore.updateNote(
-          createdNote.id,
-          toUpdateNoteInput(resolvedForm),
-        )
-        await attachmentsStore.loadAttachmentsByNote(createdNote.id, { force: true })
-        hydrateFormFromNotebook(updatedNote)
+      const savedNote =
+        resolvedForm !== saveSnapshot
+          ? await notesStore.updateNote(
+              createdNote.id,
+              toUpdateNoteInput(resolvedForm),
+            )
+          : createdNote
+
+      if (resolvedForm !== saveSnapshot) {
+        await attachmentsStore.loadAttachmentsByNote(createdNote.id, {
+          force: true,
+        })
+      }
+
+      if (formFingerprint.value === saveSnapshotFingerprint) {
+        hydrateFormFromNotebook(savedNote)
       } else {
-        hydrateFormFromNotebook(createdNote)
+        lastSavedAt.value = savedNote.updatedAt
+        triggerAutosave()
       }
 
       maybeCommitImportSummary()
@@ -505,15 +530,22 @@ const saveNotebook = async (): Promise<void> => {
     }
 
     const resolvedForm = await ensureUploadedBlocksPersisted(
-      notebookNote.value.id,
-      notebookForm.value,
+      currentNoteId,
+      saveSnapshot,
     )
     const updatedNote = await notesStore.updateNote(
-      notebookNote.value.id,
+      currentNoteId,
       toUpdateNoteInput(resolvedForm),
     )
-    await attachmentsStore.loadAttachmentsByNote(notebookNote.value.id, { force: true })
-    hydrateFormFromNotebook(updatedNote)
+    await attachmentsStore.loadAttachmentsByNote(currentNoteId, { force: true })
+
+    if (formFingerprint.value === saveSnapshotFingerprint) {
+      hydrateFormFromNotebook(updatedNote)
+    } else {
+      lastSavedAt.value = updatedNote.updatedAt
+      triggerAutosave()
+    }
+
     maybeCommitImportSummary()
   } catch (error) {
     saveError.value =
@@ -728,21 +760,30 @@ watch(
 )
 
 watch(
-  [() => category.value?.name ?? '', () => notebookNote.value?.updatedAt ?? null],
+  () => category.value?.name ?? '',
   () => {
     syncHeaderContext()
-    hydrateFormFromNotebook(notebookNote.value)
+
+    if (!isDirty.value && !isSaving.value) {
+      hydrateFormFromNotebook(notebookNote.value)
+    }
   },
   { immediate: true },
 )
 
 watch(
-  formFingerprint,
-  (nextFingerprint, previousFingerprint) => {
-    if (!previousFingerprint) {
-      previousSnapshot.value = cloneNoteFormValues(notebookForm.value)
-      return
-    }
+  () => buildNotebookSyncKey(notebookNote.value),
+  () => {
+    syncFormFromNotebook(notebookNote.value)
+  },
+  { immediate: true },
+)
+
+watch(
+  notebookForm,
+  () => {
+    const nextFingerprint = createNoteFormFingerprint(notebookForm.value)
+    const previousFingerprint = createNoteFormFingerprint(previousSnapshot.value)
 
     if (isApplyingSnapshot.value || nextFingerprint === previousFingerprint) {
       previousSnapshot.value = cloneNoteFormValues(notebookForm.value)
@@ -759,6 +800,7 @@ watch(
     saveError.value = null
     triggerAutosave()
   },
+  { deep: true },
 )
 
 watch(
