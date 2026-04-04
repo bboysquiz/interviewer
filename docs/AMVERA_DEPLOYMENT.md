@@ -8,7 +8,7 @@
 - frontend и backend работают с одного домена;
 - SQLite и скриншоты могут жить в постоянном хранилище `/data`;
 - CI в GitHub проверяет сборку и Docker image;
-- для Amvera добавлен `amvera.yml`.
+- для Amvera добавлен `amvera.yaml`.
 
 ## Стоимость
 
@@ -38,7 +38,7 @@
 
 ## 2. Что уже настроено в коде
 
-В [amvera.yml](/s:/ProgrammingInterviewer/amvera.yml):
+В [amvera.yaml](/s:/ProgrammingInterviewer/amvera.yaml):
 
 - `containerPort: 3000`
 - `persistenceMount: /data`

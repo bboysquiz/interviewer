@@ -18,7 +18,7 @@
 ## Что уже есть в репозитории
 
 - `Dockerfile`
-- `amvera.yml`
+- `amvera.yaml`
 - `.github/workflows/ci-cd.yml`
 
 ## Что осталось сделать вручную

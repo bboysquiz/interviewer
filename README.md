@@ -48,7 +48,7 @@ npm run dev
 В репозитории уже подготовлены:
 
 - `Dockerfile`
-- `amvera.yml`
+- `amvera.yaml`
 - `.github/workflows/ci-cd.yml`
 
 Рекомендуемый деплой:
