@@ -38,6 +38,90 @@ type FileSystemDirectoryHandleWithEntries = FileSystemDirectoryHandle & {
   entries: () => AsyncIterableIterator<[string, FileSystemHandle]>
 }
 
+interface FailedAttachmentReasonSummary {
+  key: string
+  label: string
+  count: number
+}
+
+const normalizeProcessingError = (
+  value: string | null,
+): Omit<FailedAttachmentReasonSummary, 'count'> => {
+  const normalized = value?.trim() ?? ''
+  const lowerCased = normalized.toLowerCase()
+
+  if (!normalized) {
+    return {
+      key: 'unknown',
+      label: 'Причина не записалась в статусе вложения',
+    }
+  }
+
+  if (
+    [
+      'quota',
+      'rate limit',
+      'resource exhausted',
+      'too many requests',
+      'exceeded your current quota',
+    ].some((pattern) => lowerCased.includes(pattern))
+  ) {
+    return {
+      key: 'quota',
+      label: 'AI-провайдер упёрся в лимит или квоту',
+    }
+  }
+
+  if (
+    ['timeout', 'timed out', 'aborterror'].some((pattern) =>
+      lowerCased.includes(pattern),
+    )
+  ) {
+    return {
+      key: 'timeout',
+      label: 'AI-провайдер не ответил вовремя',
+    }
+  }
+
+  if (
+    ['user location is not supported', 'unsupported region'].some((pattern) =>
+      lowerCased.includes(pattern),
+    )
+  ) {
+    return {
+      key: 'region',
+      label: 'Провайдер отклонил запрос из-за региона',
+    }
+  }
+
+  if (
+    ['enoent', 'no such file', 'not found'].some((pattern) =>
+      lowerCased.includes(pattern),
+    )
+  ) {
+    return {
+      key: 'file_missing',
+      label: 'Файл скриншота не найден на диске',
+    }
+  }
+
+  if (
+    ['dns', 'econnrefused', 'enotfound', 'fetch failed'].some((pattern) =>
+      lowerCased.includes(pattern),
+    )
+  ) {
+    return {
+      key: 'network',
+      label: 'Сбой сети или DNS при обращении к AI-провайдеру',
+    }
+  }
+
+  return {
+    key: normalized,
+    label: normalized,
+  }
+}
+
 const route = useRoute()
 const knowledgeBaseStore = useKnowledgeBaseStore()
 const notesStore = useNotesStore()
@@ -166,6 +250,33 @@ const failedAnalysisMessage = computed(() => {
   }
 
   return `Не удалось обработать ${count} скриншотов темы. Пока они не будут переанализированы, вопросы будут строиться в основном по тексту.`
+})
+
+const failedAttachmentReasons = computed<FailedAttachmentReasonSummary[]>(() => {
+  const groupedReasons = new Map<string, FailedAttachmentReasonSummary>()
+
+  for (const attachment of failedAttachments.value) {
+    const normalized = normalizeProcessingError(attachment.processingError)
+    const existing = groupedReasons.get(normalized.key)
+
+    if (existing) {
+      existing.count += 1
+      continue
+    }
+
+    groupedReasons.set(normalized.key, {
+      ...normalized,
+      count: 1,
+    })
+  }
+
+  return [...groupedReasons.values()].sort((left, right) => {
+    if (left.count !== right.count) {
+      return right.count - left.count
+    }
+
+    return left.label.localeCompare(right.label, 'ru')
+  })
 })
 
 const isAnyAttachmentRetryRunning = computed(() =>
@@ -682,6 +793,25 @@ const handleImportSelection = async (event: Event): Promise<void> => {
         title="Часть скриншотов темы не проанализирована"
         :message="failedAnalysisMessage"
       >
+        <div
+          v-if="failedAttachmentReasons.length"
+          class="category-notes-page__failure-summary"
+        >
+          <p class="category-notes-page__failure-summary-title">
+            Что именно сломалось:
+          </p>
+
+          <ul class="category-notes-page__failure-list">
+            <li
+              v-for="reason in failedAttachmentReasons.slice(0, 5)"
+              :key="reason.key"
+              class="category-notes-page__failure-item"
+            >
+              <strong>{{ reason.count }}:</strong> {{ reason.label }}
+            </li>
+          </ul>
+        </div>
+
         <template #actions>
           <button
             class="app-button app-button--secondary"
@@ -794,5 +924,32 @@ const handleImportSelection = async (event: Event): Promise<void> => {
   border-radius: 18px;
   color: var(--text-muted);
   text-align: center;
+}
+
+.category-notes-page__failure-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.18rem;
+}
+
+.category-notes-page__failure-summary-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.category-notes-page__failure-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.category-notes-page__failure-item {
+  line-height: 1.38;
 }
 </style>
