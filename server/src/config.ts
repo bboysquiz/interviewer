@@ -42,6 +42,7 @@ const parseListEnv = (value: string | undefined): string[] =>
     .filter(Boolean)
 
 export const SERVER_ROOT = serverRoot
+export const SERVER_HOST = process.env.HOST?.trim() || '0.0.0.0'
 export const SERVER_PORT = Number(process.env.PORT ?? 3000)
 export const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173'
 export const DATABASE_PATH =

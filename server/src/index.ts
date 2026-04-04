@@ -1,10 +1,12 @@
 import fs from 'node:fs'
+import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import cors from 'cors'
 import express from 'express'
 
 import {
   CLIENT_ORIGIN,
+  SERVER_HOST,
   SERVER_PORT,
   SERVER_ROOT,
   UPLOADS_DIR,
@@ -80,6 +82,32 @@ app.use(
   },
 )
 
-app.listen(SERVER_PORT, () => {
-  console.log(`Backend listening on http://localhost:${SERVER_PORT}`)
+const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
+  const address = server.address() as AddressInfo | null
+  const host = address?.address ?? SERVER_HOST
+  const port = address?.port ?? SERVER_PORT
+
+  console.log(`Backend listening on http://${host}:${port}`)
 })
+
+server.on('error', (error) => {
+  console.error('Failed to start backend server.', error)
+  process.exit(1)
+})
+
+const shutdown = (signal: string): void => {
+  console.log(`Received ${signal}. Shutting down backend server.`)
+
+  server.close((error) => {
+    if (error) {
+      console.error('Failed to close backend server gracefully.', error)
+      process.exit(1)
+      return
+    }
+
+    process.exit(0)
+  })
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
