@@ -9,6 +9,7 @@ export const API_PATHS = {
   notes: '/api/notes',
   search: '/api/search',
   attachments: '/api/attachments',
+  analyticsAi: '/api/analytics/ai',
   interviewQuestions: '/api/interview/questions',
   interviewEvaluations: '/api/interview/evaluations',
   interviewCheckAnswer: '/api/interview/check-answer',

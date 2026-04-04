@@ -13,6 +13,7 @@ import {
 } from './config.js'
 import { createDatabase } from './db.js'
 import { createAttachmentsRouter } from './routes/attachments.js'
+import { createAnalyticsRouter } from './routes/analytics.js'
 import { createCategoriesRouter } from './routes/categories.js'
 import { createInterviewRouter } from './routes/interview.js'
 import { createNotesRouter } from './routes/notes.js'
@@ -45,6 +46,7 @@ app.get('/api/health', (_request, response) => {
 app.use('/api/categories', createCategoriesRouter(db))
 app.use('/api/notes', createNotesRouter(db))
 app.use('/api/attachments', createAttachmentsRouter(db))
+app.use('/api/analytics', createAnalyticsRouter(db))
 app.use('/api/search', createSearchRouter(db))
 app.use('/api/interview', createInterviewRouter(db))
 

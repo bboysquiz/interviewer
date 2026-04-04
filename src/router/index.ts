@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 
+import AnalyticsPage from '@/pages/AnalyticsPage.vue'
 import CategoryNotesPage from '@/pages/CategoryNotesPage.vue'
 import CategoriesPage from '@/pages/CategoriesPage.vue'
 import HistoryDetailPage from '@/pages/HistoryDetailPage.vue'
@@ -88,6 +89,17 @@ const routes: RouteRecordRaw[] = [
       title: 'История',
       subtitle: 'Прошлые ответы, оценки и рекомендации для следующего повторения.',
       badge: 'Log',
+    },
+  },
+  {
+    path: '/analytics',
+    name: 'analytics',
+    component: AnalyticsPage,
+    meta: {
+      eyebrow: 'Analytics',
+      title: 'Аналитика',
+      subtitle: 'Лимиты, usage и остатки по AI-операциям в одном месте.',
+      badge: 'Stats',
     },
   },
   {

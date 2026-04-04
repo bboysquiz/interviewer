@@ -22,6 +22,11 @@ export const navigationItems: NavigationItem[] = [
     routeName: 'interview',
   },
   {
+    label: 'Аналитика',
+    mark: 'AN',
+    routeName: 'analytics',
+  },
+  {
     label: 'История',
     mark: 'HS',
     routeName: 'history',

@@ -6,6 +6,7 @@ import type { SqliteDatabase } from '../db.js'
 import { parseStringArray, toJson } from '../lib/json.js'
 import { replaceAttachmentChunks } from '../lib/chunks.js'
 import { nowIso } from '../lib/text.js'
+import { createAnalyticsRepository } from './analyticsRepository.js'
 import { analyzeImageForKnowledgeBase } from './ai/openAiService.js'
 import { AiServiceError } from './ai/errors.js'
 
@@ -56,6 +57,17 @@ const normalizeOptionalString = (value: unknown): string | null => {
   return normalized.length > 0 ? normalized : null
 }
 
+const parseProviderFromModel = (model: string): string => {
+  const normalized = model.trim()
+  const separatorIndex = normalized.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    return 'unknown'
+  }
+
+  return normalized.slice(0, separatorIndex)
+}
+
 const encodeImageAsDataUrl = async (
   filePath: string,
   mimeType: string,
@@ -86,6 +98,7 @@ export const analyzeAttachmentWithOpenAI = async (
   attachmentId: string,
   options: { force?: boolean } = {},
 ): Promise<AttachmentAnalysisExecution> => {
+  const analyticsRepository = createAnalyticsRepository(db)
   const attachmentByIdStatement = db.prepare(attachmentByIdStatementSql)
   const attachment = attachmentByIdStatement.get(attachmentId) as
     | AttachmentAnalysisRow
@@ -172,6 +185,19 @@ export const analyzeAttachmentWithOpenAI = async (
       extractedText,
       imageDescription,
       keyTerms,
+    })
+
+    analyticsRepository.recordAiUsageEvent({
+      task: 'image_analysis',
+      provider: parseProviderFromModel(analysis.model),
+      model: analysis.model,
+      requestId: analysis.requestId,
+      categoryId: attachment.category_id,
+      noteId: attachment.note_id,
+      inputTokens: analysis.usage?.inputTokens ?? null,
+      outputTokens: analysis.usage?.outputTokens ?? null,
+      totalTokens: analysis.usage?.totalTokens ?? null,
+      occurredAt: processedAt,
     })
 
     return {

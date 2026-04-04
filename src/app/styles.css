@@ -622,7 +622,7 @@ code {
 .bottom-nav {
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.4rem;
   padding: 0.72rem 0.78rem calc(0.86rem + env(safe-area-inset-bottom));
 }

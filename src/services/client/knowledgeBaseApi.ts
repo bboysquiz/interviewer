@@ -1,6 +1,7 @@
 import { API_PATHS } from '@/services/api'
 import type {
   Attachment,
+  AiAnalyticsSnapshot,
   Category,
   CheckInterviewAnswerInput,
   CheckInterviewAnswerResponse,
@@ -177,6 +178,9 @@ export const knowledgeBaseApi = {
         body: JSON.stringify(input),
       },
     ),
+
+  getAiAnalytics: () =>
+    requestJson<AiAnalyticsSnapshot>(API_PATHS.analyticsAi),
 
   updateAttachmentProcessing: (
     attachmentId: string,

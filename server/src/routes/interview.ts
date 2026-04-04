@@ -21,6 +21,7 @@ import {
   evaluateInterviewAnswer,
   generateInterviewQuestion,
 } from '../services/ai/openAiService.js'
+import { createAnalyticsRepository } from '../services/analyticsRepository.js'
 import {
   buildKnowledgeBaseContextFromFragments,
   normalizeKnowledgeBaseFragments,
@@ -110,9 +111,21 @@ const collectScopedPreviousQuestions = (
   ).slice(0, 20)
 }
 
+const parseProviderFromModel = (model: string): string => {
+  const normalized = model.trim()
+  const separatorIndex = normalized.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    return 'unknown'
+  }
+
+  return normalized.slice(0, separatorIndex)
+}
+
 export const createInterviewRouter = (db: SqliteDatabase): Router => {
   const router = Router()
   const repository = createInterviewRepository(db)
+  const analyticsRepository = createAnalyticsRepository(db)
 
   router.get('/history', (_request, response) => {
     response.json(repository.listHistoryRecords())
@@ -438,6 +451,17 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       )
 
       repository.insertGeneratedSession(sessionRow, questionRow)
+      analyticsRepository.recordAiUsageEvent({
+        task: 'interview_question_generation',
+        provider: parseProviderFromModel(generated.model),
+        model: generated.model,
+        requestId: generated.requestId,
+        categoryId: context.categoryId,
+        inputTokens: generated.usage?.inputTokens ?? null,
+        outputTokens: generated.usage?.outputTokens ?? null,
+        totalTokens: generated.usage?.totalTokens ?? null,
+        occurredAt: timestamp,
+      })
 
       response.status(201).json({
         session: buildSessionWithQuestions(sessionRow, [questionRow]),
@@ -619,6 +643,17 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         updatedQuestionRow,
         updatedSessionRow,
       )
+      analyticsRepository.recordAiUsageEvent({
+        task: 'interview_answer_evaluation',
+        provider: parseProviderFromModel(evaluated.model),
+        model: evaluated.model,
+        requestId: evaluated.requestId,
+        categoryId: context.categoryId,
+        inputTokens: evaluated.usage?.inputTokens ?? null,
+        outputTokens: evaluated.usage?.outputTokens ?? null,
+        totalTokens: evaluated.usage?.totalTokens ?? null,
+        occurredAt: evaluatedAt,
+      })
 
       const historyRecord = repository.getHistoryRecord(sessionRow.id)
 

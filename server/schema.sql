@@ -152,6 +152,26 @@ CREATE TABLE IF NOT EXISTS interview_answer_evaluations (
   FOREIGN KEY (question_id) REFERENCES interview_questions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS ai_usage_events (
+  id TEXT PRIMARY KEY,
+  task TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  model TEXT NOT NULL,
+  request_id TEXT,
+  category_id TEXT,
+  note_id TEXT,
+  status TEXT NOT NULL DEFAULT 'completed',
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  total_tokens INTEGER,
+  occurred_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE SET NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS note_chunks_fts
 USING fts5(
   chunk_id UNINDEXED,
@@ -266,3 +286,12 @@ CREATE INDEX IF NOT EXISTS idx_interview_foundation_usage_category_id
 
 CREATE INDEX IF NOT EXISTS idx_interview_answer_evaluations_session_id
   ON interview_answer_evaluations(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_events_occurred_at
+  ON ai_usage_events(occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_events_provider_channel
+  ON ai_usage_events(provider, channel, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_events_task
+  ON ai_usage_events(task, occurred_at DESC);

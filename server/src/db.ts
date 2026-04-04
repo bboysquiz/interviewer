@@ -103,6 +103,30 @@ const applySchema = (db: SqliteDatabase): void => {
   db.exec(schema)
 }
 
+const parseProviderFromModel = (model: string | null): string => {
+  const normalized = (model ?? '').trim()
+
+  if (!normalized) {
+    return 'unknown'
+  }
+
+  const separatorIndex = normalized.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    if (normalized.startsWith('gpt-')) {
+      return 'openai'
+    }
+
+    return 'unknown'
+  }
+
+  return normalized.slice(0, separatorIndex)
+}
+
+const toChannelFromTask = (
+  task: 'image_analysis' | 'interview_question_generation' | 'interview_answer_evaluation',
+): 'image' | 'text' => (task === 'image_analysis' ? 'image' : 'text')
+
 const runPreSchemaMigrations = (db: SqliteDatabase): void => {
   if (tableExists(db, 'notes')) {
     ensureColumn(db, 'notes', 'content_json', 'TEXT')
@@ -351,6 +375,155 @@ const runMigrations = (db: SqliteDatabase): void => {
       search_text
     FROM note_chunks
   `)
+
+  if (tableExists(db, 'ai_usage_events')) {
+    const insertUsageEventStatement = db.prepare(
+      `
+        INSERT OR IGNORE INTO ai_usage_events (
+          id,
+          task,
+          provider,
+          channel,
+          model,
+          request_id,
+          category_id,
+          note_id,
+          status,
+          input_tokens,
+          output_tokens,
+          total_tokens,
+          occurred_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', NULL, NULL, NULL, ?, ?, ?)
+      `,
+    )
+    const legacyAttachmentRows = tableExists(db, 'attachments')
+      ? (db
+          .prepare(
+            `
+              SELECT
+                id,
+                category_id,
+                note_id,
+                analysis_model,
+                analysis_request_id,
+                processed_at,
+                updated_at
+              FROM attachments
+              WHERE processing_status = 'ready'
+                AND analysis_model IS NOT NULL
+                AND TRIM(analysis_model) != ''
+            `,
+          )
+          .all() as Array<{
+          id: string
+          category_id: string | null
+          note_id: string | null
+          analysis_model: string
+          analysis_request_id: string | null
+          processed_at: string | null
+          updated_at: string
+        }>)
+      : []
+    const legacyQuestionRows = tableExists(db, 'interview_questions')
+      ? (db
+          .prepare(
+            `
+              SELECT
+                id,
+                category_id,
+                model,
+                asked_at
+              FROM interview_questions
+              WHERE model != 'manual-entry'
+            `,
+          )
+          .all() as Array<{
+          id: string
+          category_id: string | null
+          model: string
+          asked_at: string
+        }>)
+      : []
+    const legacyEvaluationRows = tableExists(db, 'interview_answer_evaluations')
+      ? (db
+          .prepare(
+            `
+              SELECT
+                id,
+                model,
+                evaluated_at
+              FROM interview_answer_evaluations
+              WHERE model != 'manual-entry'
+            `,
+          )
+          .all() as Array<{
+          id: string
+          model: string
+          evaluated_at: string
+        }>)
+      : []
+
+    const backfillUsageEventsTransaction = db.transaction(() => {
+      for (const row of legacyAttachmentRows) {
+        const provider = parseProviderFromModel(row.analysis_model)
+        const occurredAt = row.processed_at ?? row.updated_at
+
+        insertUsageEventStatement.run(
+          `legacy-attachment-${row.id}`,
+          'image_analysis',
+          provider,
+          toChannelFromTask('image_analysis'),
+          row.analysis_model,
+          row.analysis_request_id,
+          row.category_id,
+          row.note_id,
+          occurredAt,
+          occurredAt,
+          occurredAt,
+        )
+      }
+
+      for (const row of legacyQuestionRows) {
+        const provider = parseProviderFromModel(row.model)
+
+        insertUsageEventStatement.run(
+          `legacy-question-${row.id}`,
+          'interview_question_generation',
+          provider,
+          toChannelFromTask('interview_question_generation'),
+          row.model,
+          null,
+          row.category_id,
+          null,
+          row.asked_at,
+          row.asked_at,
+          row.asked_at,
+        )
+      }
+
+      for (const row of legacyEvaluationRows) {
+        const provider = parseProviderFromModel(row.model)
+
+        insertUsageEventStatement.run(
+          `legacy-evaluation-${row.id}`,
+          'interview_answer_evaluation',
+          provider,
+          toChannelFromTask('interview_answer_evaluation'),
+          row.model,
+          null,
+          null,
+          null,
+          row.evaluated_at,
+          row.evaluated_at,
+          row.evaluated_at,
+        )
+      }
+    })
+
+    backfillUsageEventsTransaction()
+  }
 }
 
 const seedDatabase = (db: SqliteDatabase): void => {

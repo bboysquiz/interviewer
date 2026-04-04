@@ -41,6 +41,19 @@ const parseListEnv = (value: string | undefined): string[] =>
     .map((item) => item.trim())
     .filter(Boolean)
 
+const parsePositiveIntEnv = (
+  value: string | undefined,
+  fallback: number,
+): number => {
+  const parsed = Number.parseInt(value ?? '', 10)
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback
+  }
+
+  return parsed
+}
+
 export const SERVER_ROOT = serverRoot
 export const SERVER_HOST = process.env.HOST?.trim() || '0.0.0.0'
 export const SERVER_PORT = Number(process.env.PORT ?? 3000)
@@ -85,4 +98,24 @@ export const GROQ_INTERVIEW_EVALUATION_MODEL =
   process.env.GROQ_INTERVIEW_EVALUATION_MODEL ?? 'openai/gpt-oss-20b'
 export const OPENAI_INTERVIEW_CONTEXT_MAX_CHARS = Number(
   process.env.OPENAI_INTERVIEW_CONTEXT_MAX_CHARS ?? 12000,
+)
+export const AI_ANALYTICS_WINDOW_HOURS = parsePositiveIntEnv(
+  process.env.AI_ANALYTICS_WINDOW_HOURS,
+  24,
+)
+export const AI_ANALYTICS_GEMINI_TEXT_REQUEST_LIMIT = parsePositiveIntEnv(
+  process.env.AI_ANALYTICS_GEMINI_TEXT_REQUEST_LIMIT,
+  20,
+)
+export const AI_ANALYTICS_GEMINI_IMAGE_REQUEST_LIMIT = parsePositiveIntEnv(
+  process.env.AI_ANALYTICS_GEMINI_IMAGE_REQUEST_LIMIT,
+  20,
+)
+export const AI_ANALYTICS_GROQ_TEXT_REQUEST_LIMIT = parsePositiveIntEnv(
+  process.env.AI_ANALYTICS_GROQ_TEXT_REQUEST_LIMIT,
+  1000,
+)
+export const AI_ANALYTICS_GROQ_IMAGE_REQUEST_LIMIT = parsePositiveIntEnv(
+  process.env.AI_ANALYTICS_GROQ_IMAGE_REQUEST_LIMIT,
+  1000,
 )
