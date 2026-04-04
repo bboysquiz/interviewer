@@ -22,4 +22,4 @@ COPY --from=build /app/server/schema.sql ./server/schema.sql
 
 EXPOSE 3000
 
-CMD ["npm", "run", "start"]
+CMD ["node", "server/dist/index.js"]
