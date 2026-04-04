@@ -3,6 +3,11 @@ meta:
   toolchain:
     name: docker
 
+build:
+  dockerfile: Dockerfile
+
 run:
+  command: node
+  args: server/dist/index.js
   persistenceMount: /data
   containerPort: 3000
