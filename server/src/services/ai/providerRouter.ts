@@ -331,6 +331,9 @@ const withProviderFallback = async <T>(
       const hasNextProvider = index < taskProviders.length - 1
 
       if (!hasNextProvider || !isRetryableAiError(error)) {
+        console.warn(
+          `AI provider "${provider.name}" failed for ${task} with no further fallback. ${formatFallbackReason(error)}`,
+        )
         throw error
       }
 

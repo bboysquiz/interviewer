@@ -82,6 +82,9 @@ const toGroqAiServiceError = (
           : status === 404
             ? 'ai_not_found'
             : 'ai_upstream_error',
+      details: {
+        provider: 'groq',
+      },
     })
   }
 
