@@ -34,6 +34,13 @@ interface OrganizationBudgetProfile {
   maxImageDescriptionChars: number
 }
 
+interface HeuristicCluster {
+  title: string
+  firstIndex: number
+  blockIndexes: number[]
+  keywordWeights: Map<string, number>
+}
+
 const DEFAULT_ORGANIZATION_BUDGET: OrganizationBudgetProfile = {
   totalChars: 5200,
   minBlockChars: 48,
@@ -58,6 +65,63 @@ const ULTRA_COMPACT_ORGANIZATION_BUDGET: OrganizationBudgetProfile = {
   maxImageDescriptionChars: 28,
 }
 
+const HEURISTIC_STOP_WORDS = new Set([
+  'это',
+  'как',
+  'что',
+  'для',
+  'при',
+  'или',
+  'если',
+  'она',
+  'они',
+  'его',
+  'еще',
+  'ещё',
+  'надо',
+  'нужно',
+  'можно',
+  'также',
+  'через',
+  'после',
+  'before',
+  'after',
+  'with',
+  'from',
+  'into',
+  'this',
+  'that',
+  'there',
+  'then',
+  'when',
+  'where',
+  'which',
+  'about',
+  'your',
+  'note',
+  'text',
+  'image',
+  'block',
+  'const',
+  'let',
+  'var',
+  'return',
+  'function',
+  'true',
+  'false',
+  'null',
+  'undefined',
+  'void',
+  'string',
+  'number',
+  'object',
+  'array',
+  'value',
+  'values',
+  'user',
+  'users',
+])
+
 export interface OrganizeExistingNoteResult
   extends OrganizeKnowledgeBaseNoteResult {
   contentBlocks: NoteContentBlock[]
@@ -75,6 +139,196 @@ const truncateText = (value: string, maxChars: number): string => {
   }
 
   return `${value.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`
+}
+
+const toKeywordWeight = (token: string): number => {
+  if (token.length >= 10) {
+    return 3
+  }
+
+  if (token.length >= 6) {
+    return 2
+  }
+
+  return 1
+}
+
+const tokenizeForHeuristic = (value: string): string[] =>
+  (value
+    .toLowerCase()
+    .match(/[\p{L}\p{N}_-]{3,}/gu) ?? [])
+    .map((token) => token.trim())
+    .filter(
+      (token) =>
+        token.length >= 3 &&
+        !HEURISTIC_STOP_WORDS.has(token) &&
+        !/^\d+$/.test(token),
+    )
+
+const getBlockHeuristicSourceText = (
+  block: NoteContentBlock,
+  input: OrganizeExistingNoteInput,
+): string => {
+  if (block.type === 'text') {
+    return block.text
+  }
+
+  const attachment = input.attachmentsById[block.attachmentId]
+
+  return [
+    attachment?.extractedText ?? '',
+    attachment?.imageDescription ?? '',
+    attachment?.originalFileName ?? '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+const buildHeuristicTitle = (
+  keywordWeights: Map<string, number>,
+  fallbackIndex: number,
+): string => {
+  const topKeywords = [...keywordWeights.entries()]
+    .sort((left, right) => {
+      if (left[1] !== right[1]) {
+        return right[1] - left[1]
+      }
+
+      return left[0].localeCompare(right[0], 'ru')
+    })
+    .slice(0, 2)
+    .map(([keyword]) => keyword)
+
+  if (topKeywords.length === 0) {
+    return `Раздел ${fallbackIndex}`
+  }
+
+  if (topKeywords.length === 1) {
+    return topKeywords[0]!.charAt(0).toUpperCase() + topKeywords[0]!.slice(1)
+  }
+
+  return topKeywords
+    .map((keyword) => keyword.charAt(0).toUpperCase() + keyword.slice(1))
+    .join(' / ')
+}
+
+const scoreClusterMatch = (
+  cluster: HeuristicCluster,
+  tokens: string[],
+): number => {
+  let score = 0
+
+  for (const token of tokens) {
+    score += cluster.keywordWeights.get(token) ?? 0
+  }
+
+  return score
+}
+
+const buildHeuristicOrganization = (
+  input: OrganizeExistingNoteInput,
+  blocks: NoteContentBlock[],
+): OrganizeExistingNoteResult => {
+  const clusters: HeuristicCluster[] = []
+
+  blocks.forEach((block, index) => {
+    const sourceText = getBlockHeuristicSourceText(block, input)
+    const tokens = tokenizeForHeuristic(sourceText)
+    const uniqueTokens = [...new Set(tokens)]
+
+    if (uniqueTokens.length === 0) {
+      const fallbackCluster =
+        clusters.find((cluster) => cluster.title === 'Разное') ??
+        (() => {
+          const createdCluster: HeuristicCluster = {
+            title: 'Разное',
+            firstIndex: index + 1,
+            blockIndexes: [],
+            keywordWeights: new Map(),
+          }
+          clusters.push(createdCluster)
+          return createdCluster
+        })()
+
+      fallbackCluster.blockIndexes.push(index + 1)
+      return
+    }
+
+    let bestCluster: HeuristicCluster | null = null
+    let bestScore = 0
+
+    for (const cluster of clusters) {
+      const score = scoreClusterMatch(cluster, uniqueTokens)
+
+      if (score > bestScore) {
+        bestScore = score
+        bestCluster = cluster
+      }
+    }
+
+    const shouldCreateCluster =
+      !bestCluster ||
+      bestScore < 2 ||
+      (clusters.length < 12 && bestScore < uniqueTokens.length)
+
+    const targetCluster: HeuristicCluster =
+      shouldCreateCluster
+        ? (() => {
+            const keywordWeights = new Map<string, number>()
+
+            for (const token of uniqueTokens) {
+              keywordWeights.set(token, toKeywordWeight(token))
+            }
+
+            const createdCluster: HeuristicCluster = {
+              title: buildHeuristicTitle(keywordWeights, clusters.length + 1),
+              firstIndex: index + 1,
+              blockIndexes: [],
+              keywordWeights,
+            }
+            clusters.push(createdCluster)
+            return createdCluster
+          })()
+        : bestCluster!
+
+    targetCluster.blockIndexes.push(index + 1)
+
+    for (const token of uniqueTokens) {
+      targetCluster.keywordWeights.set(
+        token,
+        (targetCluster.keywordWeights.get(token) ?? 0) + toKeywordWeight(token),
+      )
+    }
+
+    targetCluster.title = buildHeuristicTitle(
+      targetCluster.keywordWeights,
+      clusters.indexOf(targetCluster) + 1,
+    )
+  })
+
+  const sections = clusters
+    .filter((cluster) => cluster.blockIndexes.length > 0)
+    .sort((left, right) => left.firstIndex - right.firstIndex)
+    .map((cluster) => ({
+      title: cluster.title,
+      blockIndexes: cluster.blockIndexes,
+    }))
+
+  const organized = buildOrganizedContentBlocks(blocks, {
+    sections,
+    model: 'local:heuristic-note-organization',
+    requestId: null,
+    usage: null,
+  })
+
+  return {
+    sections,
+    model: 'local:heuristic-note-organization',
+    requestId: null,
+    usage: null,
+    contentBlocks: organized.contentBlocks,
+    sectionCount: organized.sectionCount,
+  }
 }
 
 const estimatePerBlockBudget = (
@@ -263,7 +517,6 @@ export const reorganizeNoteContent = async (
     ULTRA_COMPACT_ORGANIZATION_BUDGET,
   ]
   let organization: OrganizeKnowledgeBaseNoteResult | null = null
-  let lastError: unknown = null
 
   for (let index = 0; index < budgets.length; index += 1) {
     try {
@@ -272,20 +525,15 @@ export const reorganizeNoteContent = async (
       )
       break
     } catch (error) {
-      lastError = error
-
       if (!shouldRetryWithCompactInput(error) || index === budgets.length - 1) {
-        throw error
+        organization = null
+        break
       }
     }
   }
 
   if (!organization) {
-    throw (lastError ??
-      new AiServiceError('AI note organization failed.', {
-        status: 502,
-        code: 'ai_upstream_error',
-      }))
+    return buildHeuristicOrganization(input, sourceBlocks)
   }
 
   const organized = buildOrganizedContentBlocks(sourceBlocks, organization)

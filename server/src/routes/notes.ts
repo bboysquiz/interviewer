@@ -444,18 +444,20 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         content: nextRawText,
       })
 
-      analyticsRepository.recordAiUsageEvent({
-        task: 'note_organization',
-        provider: parseProviderFromModel(organized.model),
-        model: organized.model,
-        requestId: organized.requestId,
-        categoryId: existing.category_id,
-        noteId,
-        inputTokens: organized.usage?.inputTokens ?? null,
-        outputTokens: organized.usage?.outputTokens ?? null,
-        totalTokens: organized.usage?.totalTokens ?? null,
-        occurredAt: updatedAt,
-      })
+      if (!organized.model.startsWith('local:')) {
+        analyticsRepository.recordAiUsageEvent({
+          task: 'note_organization',
+          provider: parseProviderFromModel(organized.model),
+          model: organized.model,
+          requestId: organized.requestId,
+          categoryId: existing.category_id,
+          noteId,
+          inputTokens: organized.usage?.inputTokens ?? null,
+          outputTokens: organized.usage?.outputTokens ?? null,
+          totalTokens: organized.usage?.totalTokens ?? null,
+          occurredAt: updatedAt,
+        })
+      }
 
       response.json({
         note: getNoteById(noteId),
