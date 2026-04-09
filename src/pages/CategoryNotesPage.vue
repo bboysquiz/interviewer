@@ -272,6 +272,7 @@ const previousSnapshot = ref(cloneNoteFormValues(notebookForm.value))
 const lastSavedFingerprint = ref(createNoteFormFingerprint(notebookForm.value))
 const lastSavedAt = ref<string | null>(null)
 const isApplyingSnapshot = ref(false)
+const isNotebookBootstrapPending = ref(false)
 let analysisPollHandle: ReturnType<typeof setInterval> | null = null
 let autosaveHandle: ReturnType<typeof setTimeout> | null = null
 
@@ -566,18 +567,28 @@ const syncHeaderContext = (): void => {
 
 const loadNotebook = async (force = false): Promise<void> => {
   if (!categoryId.value) {
+    isNotebookBootstrapPending.value = false
     return
   }
 
+  const requestedCategoryId = categoryId.value
+
   try {
-    const loadedNotes = await notesStore.loadNotesByCategory(categoryId.value, { force })
-    const primaryNote = loadedNotes[0] ?? null
+    const loadedNotes = await notesStore.loadNotesByCategory(requestedCategoryId, { force })
+    const primaryNoteSummary = loadedNotes[0] ?? null
+    const primaryNote = primaryNoteSummary
+      ? await notesStore.loadNote(primaryNoteSummary.id, { force })
+      : null
 
     if (primaryNote) {
       await attachmentsStore.loadAttachmentsByNote(primaryNote.id, { force })
     }
   } catch {
     // The page shows the stored error state.
+  } finally {
+    if (categoryId.value === requestedCategoryId) {
+      isNotebookBootstrapPending.value = false
+    }
   }
 }
 
@@ -632,7 +643,16 @@ const maybeCommitImportSummary = (): void => {
 }
 
 const syncFormFromNotebook = (note: Note | null): void => {
-  if (isSaving.value || isDirty.value) {
+  if (isSaving.value) {
+    return
+  }
+
+  if (isNotebookBootstrapPending.value) {
+    hydrateFormFromNotebook(note)
+    return
+  }
+
+  if (isDirty.value) {
     return
   }
 
@@ -716,7 +736,7 @@ const saveNotebook = async (): Promise<void> => {
 const triggerAutosave = (): void => {
   stopAutosave()
 
-  if (!isDirty.value || showCategoryNotFound.value) {
+  if (!isDirty.value || showCategoryNotFound.value || isNotebookBootstrapPending.value) {
     return
   }
 
@@ -840,12 +860,6 @@ const analyzeNotebook = async (): Promise<void> => {
     return
   }
 
-  if (hasScreenshotBlocksWithoutAnalysis.value) {
-    organizeError.value =
-      organizeBlockedReason.value ??
-      'Сначала проанализируй все скриншоты темы нейросетью.'
-    return
-  }
 
   if (isDirty.value || !notebookNote.value) {
     await saveNotebook()
@@ -1032,7 +1046,14 @@ const organizeNotebook = async (): Promise<void> => {
 
   if (!hasMeaningfulNotebookContent.value) {
     organizeError.value =
-      'Сначала добавь в тему текст или хотя бы один скриншот, чтобы AI было что группировать.'
+      '\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0434\u043e\u0431\u0430\u0432\u044c \u0432 \u0442\u0435\u043c\u0443 \u0442\u0435\u043a\u0441\u0442 \u0438\u043b\u0438 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u0438\u043d \u0441\u043a\u0440\u0438\u043d\u0448\u043e\u0442, \u0447\u0442\u043e\u0431\u044b AI \u0431\u044b\u043b\u043e \u0447\u0442\u043e \u0433\u0440\u0443\u043f\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c.'
+    return
+  }
+
+  if (hasScreenshotBlocksWithoutAnalysis.value) {
+    organizeError.value =
+      organizeBlockedReason.value ??
+      '\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u0443\u0439 \u0432\u0441\u0435 \u0441\u043a\u0440\u0438\u043d\u0448\u043e\u0442\u044b \u0442\u0435\u043c\u044b \u043d\u0435\u0439\u0440\u043e\u0441\u0435\u0442\u044c\u044e.'
     return
   }
 
@@ -1100,6 +1121,7 @@ const undoLastChange = (): void => {
 watch(
   categoryId,
   () => {
+    isNotebookBootstrapPending.value = true
     saveError.value = null
     importError.value = null
     importSummary.value = null
@@ -1352,6 +1374,7 @@ const nowAsIso = (): string => new Date().toISOString()
       >
         <template #actions>
           <button
+            v-if="false"
             class="app-button app-button--secondary"
             type="button"
             :disabled="isSaving || isImporting || isOrganizing || isAnalyzingNote"
@@ -1516,3 +1539,4 @@ const nowAsIso = (): string => new Date().toISOString()
   color: var(--text);
 }
 </style>
+
