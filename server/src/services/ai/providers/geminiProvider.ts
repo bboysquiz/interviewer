@@ -39,7 +39,6 @@ import {
   imageAnalysisSchema,
   interviewEvaluationSchema,
   interviewQuestionSchema,
-  noteOrganizationSchema,
   parseStructuredRecord,
 } from '../common.js'
 import { AiServiceError } from '../errors.js'
@@ -854,7 +853,6 @@ const organizeKnowledgeBaseNote = async (
     ],
     generationConfig: {
       responseMimeType: 'application/json',
-      responseJsonSchema: noteOrganizationSchema,
       maxOutputTokens: 2200,
     },
   })

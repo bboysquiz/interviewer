@@ -672,6 +672,7 @@ const saveNotebook = async (): Promise<void> => {
     }
 
     maybeCommitImportSummary()
+    await saveNotebook()
   } catch (error) {
     saveError.value =
       error instanceof Error ? error.message : 'Не удалось сохранить тему.'
