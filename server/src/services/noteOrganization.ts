@@ -183,10 +183,6 @@ const shouldRetryWithCompactInput = (error: unknown): boolean => {
     'too many states',
     'constraint has too many states',
     'schema produces a constraint',
-    'empty structured response',
-    'bad gateway',
-    'temporarily unavailable',
-    'service unavailable',
     'failed to validate json',
   ].some((pattern) => normalizedMessage.includes(pattern))
 }

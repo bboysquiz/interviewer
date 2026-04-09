@@ -16,6 +16,7 @@ import type {
   GenerateInterviewQuestionResult,
   OrganizeKnowledgeBaseNoteInput,
   OrganizeKnowledgeBaseNoteResult,
+  OrganizedNoteSection,
 } from '../dto.js'
 import {
   buildEvaluationResult,
@@ -148,6 +149,58 @@ const shouldRetryWithoutStructuredJson = (error: unknown): boolean => {
     normalizedMessage.includes('failed_generation') ||
     normalizedMessage.includes('json')
   )
+}
+
+const parseNoteOrganizationSectionsFromText = (
+  rawOutput: string,
+): OrganizedNoteSection[] => {
+  const lines = rawOutput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const sections: OrganizedNoteSection[] = []
+  let currentTitle: string | null = null
+  let currentIndexes: number[] = []
+
+  const flushCurrentSection = (): void => {
+    if (!currentTitle || currentIndexes.length === 0) {
+      currentTitle = null
+      currentIndexes = []
+      return
+    }
+
+    sections.push({
+      title: currentTitle,
+      blockIndexes: [...new Set(currentIndexes)].filter((value) => value > 0),
+    })
+    currentTitle = null
+    currentIndexes = []
+  }
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^section\s*:\s*(.+)$/i)
+
+    if (sectionMatch?.[1]) {
+      flushCurrentSection()
+      currentTitle = sectionMatch[1].trim()
+      continue
+    }
+
+    const blocksMatch = line.match(/^blocks?\s*:\s*(.+)$/i)
+
+    if (blocksMatch?.[1]) {
+      currentIndexes = blocksMatch[1]
+        .split(',')
+        .map((part) => Number.parseInt(part.trim(), 10))
+        .filter((value) => Number.isInteger(value) && value > 0)
+      continue
+    }
+  }
+
+  flushCurrentSection()
+
+  return sections
 }
 
 const analyzeImageForKnowledgeBase = async (
@@ -356,13 +409,19 @@ const organizeKnowledgeBaseNote = async (
 
   try {
     const client = getGroqClient()
+    const systemPrompt = [
+      buildNoteOrganizationSystemPrompt(),
+      'Return plain text only.',
+      'Use this exact format and nothing else:',
+      'SECTION: <short Russian title>',
+      'BLOCKS: <comma-separated one-based indexes>',
+      'Repeat the SECTION/BLOCKS pair for every section.',
+      'Do not add explanations, markdown, bullets, JSON, or prose before or after the sections.',
+    ].join('\n\n')
     const messages = [
       {
         role: 'system' as const,
-        content: [
-          buildNoteOrganizationSystemPrompt(),
-          'Return only one JSON object with key sections. Each section must include title and block_indexes.',
-        ].join('\n\n'),
+        content: systemPrompt,
       },
       {
         role: 'user' as const,
@@ -370,46 +429,17 @@ const organizeKnowledgeBaseNote = async (
       },
     ]
 
-    let completion: Awaited<ReturnType<typeof client.chat.completions.create>>
-
-    try {
-      completion = await client.chat.completions.create({
-        model: GROQ_INTERVIEW_QUESTION_MODEL,
-        messages,
-        response_format: {
-          type: 'json_object',
-        },
-        max_completion_tokens: 2200,
-      })
-    } catch (error) {
-      const aiError = toGroqAiServiceError(error, 'Groq note organization failed.')
-
-      if (!shouldRetryWithoutStructuredJson(aiError)) {
-        throw aiError
-      }
-
-      completion = await client.chat.completions.create({
-        model: GROQ_INTERVIEW_QUESTION_MODEL,
-        messages: [
-          messages[0],
-          {
-            role: 'user',
-            content: [
-              buildNoteOrganizationUserPrompt(input),
-              'Important: do not add explanations before or after the JSON object.',
-              'Return a plain text response that contains only one valid JSON object.',
-            ].join('\n\n'),
-          },
-        ],
-        max_completion_tokens: 2200,
-      })
-    }
+    const completion = await client.chat.completions.create({
+      model: GROQ_INTERVIEW_QUESTION_MODEL,
+      messages,
+      max_completion_tokens: 900,
+    })
 
     const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
 
     if (!rawOutput) {
       throw new AiServiceError(
-        'Groq returned an empty structured response for note organization.',
+        'Groq returned an empty response for note organization.',
         {
           status: 502,
           code: 'ai_invalid_response',
@@ -417,17 +447,45 @@ const organizeKnowledgeBaseNote = async (
       )
     }
 
-    const record = parseStructuredRecord(
-      rawOutput,
-      'Groq returned invalid JSON for note organization.',
-    )
+    let sections = parseNoteOrganizationSectionsFromText(rawOutput)
 
-    return buildNoteOrganizationResult(
-      record,
-      formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
-      completion.id ?? null,
-      buildGroqUsage(completion.usage),
-    )
+    if (sections.length === 0) {
+      try {
+        const record = parseStructuredRecord(
+          rawOutput,
+          'Groq returned invalid structured data for note organization.',
+        )
+        sections = buildNoteOrganizationResult(
+          record,
+          formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+          completion.id ?? null,
+          buildGroqUsage(completion.usage),
+        ).sections
+      } catch (error) {
+        const aiError = error instanceof AiServiceError
+          ? error
+          : new AiServiceError(
+              'Groq returned an unreadable response for note organization.',
+              {
+                status: 502,
+                code: 'ai_invalid_response',
+              },
+            )
+
+        if (!shouldRetryWithoutStructuredJson(aiError)) {
+          throw aiError
+        }
+
+        throw aiError
+      }
+    }
+
+    return {
+      sections,
+      model: formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+      requestId: completion.id ?? null,
+      usage: buildGroqUsage(completion.usage),
+    }
   } catch (error) {
     throw toGroqAiServiceError(error, 'Groq note organization failed.')
   }
