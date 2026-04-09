@@ -29,6 +29,76 @@ const delay = async (milliseconds: number): Promise<void> => {
   })
 }
 
+const extractRetryDelayMs = (message: string): number | null => {
+  const retryDelayMatch = message.match(/retry in (\d+(?:\.\d+)?)s/i)
+
+  if (!retryDelayMatch) {
+    return null
+  }
+
+  const seconds = Number.parseFloat(retryDelayMatch[1])
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null
+  }
+
+  return Math.ceil(seconds * 1000)
+}
+
+const isRetryableAnalyzeError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  const normalizedMessage = error.message.toLowerCase()
+
+  return [
+    'retry in ',
+    'quota',
+    'rate limit',
+    'too many requests',
+    'resource exhausted',
+    'service unavailable',
+    'temporarily unavailable',
+    'high demand',
+    'bad gateway',
+    'timed out',
+    'timeout',
+  ].some((pattern) => normalizedMessage.includes(pattern))
+}
+
+const resolveRetryDelayMs = (error: unknown, attempt: number): number => {
+  if (!(error instanceof Error)) {
+    return 10_000
+  }
+
+  const explicitDelay = extractRetryDelayMs(error.message)
+
+  if (explicitDelay !== null) {
+    return explicitDelay
+  }
+
+  const normalizedMessage = error.message.toLowerCase()
+
+  if (
+    ['quota', 'rate limit', 'too many requests', 'resource exhausted'].some((pattern) =>
+      normalizedMessage.includes(pattern),
+    )
+  ) {
+    return Math.min(60_000, 15_000 * attempt)
+  }
+
+  if (
+    ['service unavailable', 'temporarily unavailable', 'high demand', 'bad gateway'].some(
+      (pattern) => normalizedMessage.includes(pattern),
+    )
+  ) {
+    return Math.min(30_000, 8_000 * attempt)
+  }
+
+  return Math.min(20_000, 5_000 * attempt)
+}
+
 export const useAttachmentsStore = defineStore('attachments', () => {
   const attachmentsByNote = ref<Record<string, Attachment[]>>({})
   const attachmentsById = ref<Record<string, Attachment>>({})
@@ -142,7 +212,12 @@ export const useAttachmentsStore = defineStore('attachments', () => {
 
   const analyzeAttachments = async (
     attachmentIds: string[],
-    options: { force?: boolean; concurrency?: number; delayMs?: number } = {},
+    options: {
+      force?: boolean
+      concurrency?: number
+      delayMs?: number
+      maxAttempts?: number
+    } = {},
   ): Promise<AnalyzeAttachmentResponse[]> => {
     const uniqueAttachmentIds = [...new Set(attachmentIds.filter(Boolean))]
 
@@ -152,22 +227,37 @@ export const useAttachmentsStore = defineStore('attachments', () => {
 
     const concurrency = Math.max(1, options.concurrency ?? 3)
     const delayMs = Math.max(0, options.delayMs ?? 0)
-    let nextIndex = 0
+    const maxAttempts = Math.max(1, options.maxAttempts ?? 3)
+    const queue = uniqueAttachmentIds.map((attachmentId) => ({
+      attachmentId,
+      attempt: 1,
+    }))
     const results: AnalyzeAttachmentResponse[] = []
 
     const runWorker = async (): Promise<void> => {
-      while (nextIndex < uniqueAttachmentIds.length) {
-        const currentIndex = nextIndex
-        nextIndex += 1
-        const attachmentId = uniqueAttachmentIds[currentIndex]
+      while (queue.length > 0) {
+        const currentItem = queue.shift()
+
+        if (!currentItem) {
+          return
+        }
+
+        const { attachmentId, attempt } = currentItem
 
         try {
           const response = await analyzeAttachment(attachmentId, {
             force: options.force,
           })
           results.push(response)
-        } catch {
-          // Per-attachment errors are already stored in the analysis state.
+        } catch (error) {
+          if (isRetryableAnalyzeError(error) && attempt < maxAttempts) {
+            await delay(resolveRetryDelayMs(error, attempt))
+            queue.push({
+              attachmentId,
+              attempt: attempt + 1,
+            })
+            continue
+          }
         }
 
         await delay(delayMs)

@@ -33,6 +33,7 @@ const providerCooldowns = new Map<string, number>()
 
 const DEFAULT_TEMPORARY_PROVIDER_COOLDOWN_MS = 30_000
 const DEFAULT_QUOTA_PROVIDER_COOLDOWN_MS = 60_000
+const DEFAULT_DAILY_QUOTA_PROVIDER_COOLDOWN_MS = 12 * 60 * 60 * 1000
 
 const uniqueProviders = (value: AiProviderName[]): AiProviderName[] =>
   [...new Set(value)]
@@ -97,6 +98,39 @@ const extractRetryDelayMsFromDetails = (details: unknown): number | null => {
   return null
 }
 
+const hasPerDayQuotaExceeded = (error: AiServiceError): boolean => {
+  if (!error.details || typeof error.details !== 'object') {
+    return false
+  }
+
+  const providerDetails = (error.details as { providerDetails?: unknown }).providerDetails
+
+  if (!Array.isArray(providerDetails)) {
+    return false
+  }
+
+  return providerDetails.some((item) => {
+    if (!item || typeof item !== 'object') {
+      return false
+    }
+
+    const violations = (item as { violations?: unknown }).violations
+
+    if (!Array.isArray(violations)) {
+      return false
+    }
+
+    return violations.some((violation) => {
+      if (!violation || typeof violation !== 'object') {
+        return false
+      }
+
+      const quotaId = (violation as { quotaId?: unknown }).quotaId
+      return typeof quotaId === 'string' && quotaId.toLowerCase().includes('perday')
+    })
+  })
+}
+
 const extractRetryDelayMs = (error: AiServiceError): number | null => {
   const fromDetails = extractRetryDelayMsFromDetails(error.details)
 
@@ -120,6 +154,10 @@ const extractRetryDelayMs = (error: AiServiceError): number | null => {
 }
 
 const getProviderCooldownDurationMs = (error: AiServiceError): number | null => {
+  if (hasPerDayQuotaExceeded(error)) {
+    return DEFAULT_DAILY_QUOTA_PROVIDER_COOLDOWN_MS
+  }
+
   const retryDelayMs = extractRetryDelayMs(error)
 
   if (retryDelayMs !== null) {
