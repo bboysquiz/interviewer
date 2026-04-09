@@ -9,6 +9,8 @@ import {
 } from '../config.js'
 import type { SqliteDatabase } from '../db.js'
 import { createId, nowIso } from '../lib/text.js'
+import type { AiProviderRuntimeStatus } from './ai/providerRuntimeStatus.js'
+import { getAiProviderRuntimeStatuses } from './ai/providerRuntimeStatus.js'
 
 export type AiAnalyticsTask =
   | 'image_analysis'
@@ -74,6 +76,7 @@ export interface AiAnalyticsChannelSummary extends AiAnalyticsUsageTotals {
   usedAllTime: number
   limit24h: number | null
   remaining24h: number | null
+  runtimeStatus: AiProviderRuntimeStatus | null
 }
 
 export interface AiAnalyticsFriendlyBudget {
@@ -86,6 +89,8 @@ export interface AiAnalyticsFriendlyBudget {
   used24h: number
   limit24h: number | null
   remaining24h: number | null
+  availabilityState: 'available' | 'degraded' | 'blocked' | 'unknown'
+  availabilityMessage: string | null
 }
 
 export interface AiAnalyticsAttachmentsSummary {
@@ -238,6 +243,13 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
       const usageRows = usageEventsStatement.all() as AiUsageEventRow[]
       const attachmentStatusRows =
         attachmentStatusesStatement.all() as AttachmentStatusRow[]
+      const runtimeStatuses = getAiProviderRuntimeStatuses()
+      const runtimeStatusByChannel = new Map(
+        runtimeStatuses.map((status) => [
+          `${status.provider}:${status.channel}`,
+          status,
+        ]),
+      )
 
       const overviewLastWindow = buildTotals()
       const overviewAllTime = buildTotals()
@@ -273,6 +285,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             usedAllTime: 0,
             limit24h: getChannelLimit(provider, channel),
             remaining24h: getChannelLimit(provider, channel),
+            runtimeStatus: null,
             ...buildTotals(),
           })
         }
@@ -297,6 +310,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             usedAllTime: 0,
             limit24h: getChannelLimit(row.provider, row.channel),
             remaining24h: getChannelLimit(row.provider, row.channel),
+            runtimeStatus: null,
             ...buildTotals(),
           }
 
@@ -326,6 +340,82 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
         }
       }
 
+      const buildAvailabilityForChannel = (channel: AiAnalyticsChannel) => {
+        const channelStatuses = configuredProviders.map(
+          (provider) => runtimeStatusByChannel.get(`${provider}:${channel}`) ?? null,
+        )
+        const knownStatuses = channelStatuses.filter(
+          (status): status is AiProviderRuntimeStatus => status !== null,
+        )
+
+        if (knownStatuses.length === 0) {
+          return {
+            availabilityState: 'unknown' as const,
+            availabilityMessage: null,
+          }
+        }
+
+        const blockingStatuses = knownStatuses.filter(
+          (status) => status.state !== 'available',
+        )
+        const availableStatuses = knownStatuses.filter(
+          (status) => status.state === 'available',
+        )
+
+        if (blockingStatuses.length === 0) {
+          return {
+            availabilityState: 'available' as const,
+            availabilityMessage: null,
+          }
+        }
+
+        const summary = blockingStatuses
+          .map((status) => {
+            const providerLabel = status.provider.toUpperCase()
+            const dimensionLabel =
+              status.limitDimension === 'tokens'
+                ? 'tokens'
+                : status.limitDimension === 'requests'
+                  ? 'requests'
+                  : 'quota'
+            const windowLabel =
+              status.window === 'day'
+                ? 'per day'
+                : status.window === 'minute'
+                  ? 'per minute'
+                  : ''
+            const retryLabel =
+              typeof status.retryAfterMs === 'number' && status.retryAfterMs > 0
+                ? ` Retry in ~${Math.max(1, Math.ceil(status.retryAfterMs / 60_000))} min.`
+                : ''
+
+            if (status.state === 'quota_exhausted') {
+              return `${providerLabel}: quota exhausted${windowLabel ? ` (${dimensionLabel} ${windowLabel})` : ''}.${retryLabel}`
+            }
+
+            if (status.state === 'rate_limited') {
+              return `${providerLabel}: rate limited${windowLabel ? ` (${dimensionLabel} ${windowLabel})` : ''}.${retryLabel}`
+            }
+
+            if (status.state === 'temporarily_unavailable') {
+              return `${providerLabel}: temporarily unavailable.${retryLabel}`
+            }
+
+            return `${providerLabel}: request failed.${retryLabel}`
+          })
+          .join(' ')
+
+        return {
+          availabilityState:
+            blockingStatuses.length === knownStatuses.length &&
+            availableStatuses.length === 0 &&
+            knownStatuses.length === channelStatuses.length
+              ? ('blocked' as const)
+              : ('degraded' as const),
+          availabilityMessage: summary,
+        }
+      }
+
       const finalizedChannelSummaries = [...channelSummaries.values()]
         .map((summary) => {
           const models = [...summary.modelSet].sort((left, right) =>
@@ -344,6 +434,10 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             usedAllTime: summary.usedAllTime,
             limit24h: summary.limit24h,
             remaining24h,
+            runtimeStatus:
+              runtimeStatusByChannel.get(
+                `${summary.provider}:${summary.channel}`,
+              ) ?? null,
             requests: summary.requests,
             inputTokens: summary.inputTokens,
             outputTokens: summary.outputTokens,
@@ -392,6 +486,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             textBudget.limit24h === null
               ? null
               : Math.max(textBudget.limit24h - textBudget.used24h, 0),
+          ...buildAvailabilityForChannel('text'),
         },
         {
           id: 'answer_evaluation',
@@ -402,6 +497,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             textBudget.limit24h === null
               ? null
               : Math.max(textBudget.limit24h - textBudget.used24h, 0),
+          ...buildAvailabilityForChannel('text'),
         },
         {
           id: 'image_analysis',
@@ -412,6 +508,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             imageBudget.limit24h === null
               ? null
               : Math.max(imageBudget.limit24h - imageBudget.used24h, 0),
+          ...buildAvailabilityForChannel('image'),
         },
         {
           id: 'note_organization',
@@ -422,6 +519,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
             textBudget.limit24h === null
               ? null
               : Math.max(textBudget.limit24h - textBudget.used24h, 0),
+          ...buildAvailabilityForChannel('text'),
         },
       ]
 

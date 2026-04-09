@@ -19,6 +19,26 @@ export interface AiAnalyticsTaskSummary extends AiAnalyticsUsageTotals {
   usedAllTime: number
 }
 
+export interface AiAnalyticsProviderRuntimeStatus {
+  provider: 'gemini' | 'groq'
+  channel: AiAnalyticsChannel
+  task: AiAnalyticsTask
+  state:
+    | 'available'
+    | 'rate_limited'
+    | 'quota_exhausted'
+    | 'temporarily_unavailable'
+    | 'error'
+  message: string | null
+  limitDimension: 'requests' | 'tokens' | 'unknown'
+  window: 'minute' | 'day' | 'unknown'
+  retryAfterMs: number | null
+  limitValue: number | null
+  usedValue: number | null
+  requestedValue: number | null
+  updatedAt: string
+}
+
 export interface AiAnalyticsChannelSummary extends AiAnalyticsUsageTotals {
   provider: string
   channel: AiAnalyticsChannel
@@ -27,6 +47,7 @@ export interface AiAnalyticsChannelSummary extends AiAnalyticsUsageTotals {
   usedAllTime: number
   limit24h: number | null
   remaining24h: number | null
+  runtimeStatus: AiAnalyticsProviderRuntimeStatus | null
 }
 
 export interface AiAnalyticsFriendlyBudget {
@@ -39,6 +60,8 @@ export interface AiAnalyticsFriendlyBudget {
   used24h: number
   limit24h: number | null
   remaining24h: number | null
+  availabilityState: 'available' | 'degraded' | 'blocked' | 'unknown'
+  availabilityMessage: string | null
 }
 
 export interface AiAnalyticsAttachmentsSummary {

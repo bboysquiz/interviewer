@@ -16,6 +16,10 @@ import type {
 import { AiServiceError } from './errors.js'
 import { geminiProvider } from './providers/geminiProvider.js'
 import { groqProvider } from './providers/groqProvider.js'
+import {
+  markAiProviderAvailable,
+  markAiProviderFailure,
+} from './providerRuntimeStatus.js'
 import type { AiProvider, AiProviderName } from './providerTypes.js'
 
 type AiTask =
@@ -40,6 +44,45 @@ const uniqueProviders = (value: AiProviderName[]): AiProviderName[] =>
 
 const buildCooldownKey = (task: AiTask, providerName: AiProviderName): string =>
   `${task}:${providerName}`
+
+const parseDurationToMs = (value: string): number | null => {
+  const normalized = value.trim().toLowerCase()
+
+  if (!normalized) {
+    return null
+  }
+
+  const pattern = /(\d+(?:\.\d+)?)(ms|h|m|s)/g
+  let totalMs = 0
+  let matched = false
+  let match: RegExpExecArray | null = null
+
+  while ((match = pattern.exec(normalized)) !== null) {
+    matched = true
+    const amount = Number.parseFloat(match[1])
+    const unit = match[2]
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      continue
+    }
+
+    if (unit === 'h') {
+      totalMs += amount * 60 * 60 * 1000
+    } else if (unit === 'm') {
+      totalMs += amount * 60 * 1000
+    } else if (unit === 's') {
+      totalMs += amount * 1000
+    } else if (unit === 'ms') {
+      totalMs += amount
+    }
+  }
+
+  if (!matched || totalMs <= 0) {
+    return null
+  }
+
+  return Math.ceil(totalMs)
+}
 
 const getProviderCooldownUntil = (
   task: AiTask,
@@ -82,16 +125,10 @@ const extractRetryDelayMsFromDetails = (details: unknown): number | null => {
       continue
     }
 
-    const match = retryDelay.match(/(\d+(?:\.\d+)?)s/i)
+    const parsedDuration = parseDurationToMs(retryDelay)
 
-    if (!match) {
-      continue
-    }
-
-    const seconds = Number.parseFloat(match[1])
-
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return Math.ceil(seconds * 1000)
+    if (parsedDuration !== null) {
+      return parsedDuration
     }
   }
 
@@ -138,19 +175,15 @@ const extractRetryDelayMs = (error: AiServiceError): number | null => {
     return fromDetails
   }
 
-  const retryDelayMatch = error.message.match(/retry in (\d+(?:\.\d+)?)s/i)
+  const retryDelayMatch = error.message.match(
+    /(?:retry|try again) in ([0-9hms.]+)/i,
+  )
 
   if (!retryDelayMatch) {
     return null
   }
 
-  const seconds = Number.parseFloat(retryDelayMatch[1])
-
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return null
-  }
-
-  return Math.ceil(seconds * 1000)
+  return parseDurationToMs(retryDelayMatch[1])
 }
 
 const getProviderCooldownDurationMs = (error: AiServiceError): number | null => {
@@ -291,6 +324,42 @@ const getProvidersForTask = (task: AiTask): AiProvider[] => {
   }
 
   if (eligibleProviders.length > 0) {
+    const now = Date.now()
+    const cooldownEntries = eligibleProviders
+      .map((provider) => ({
+        provider,
+        cooldownUntil: getProviderCooldownUntil(task, provider.name),
+      }))
+      .filter(
+        (entry): entry is { provider: AiProvider; cooldownUntil: number } =>
+          entry.cooldownUntil !== null,
+      )
+
+    const nearestCooldown = cooldownEntries.reduce<number | null>(
+      (current, entry) =>
+        current === null || entry.cooldownUntil < current ? entry.cooldownUntil : current,
+      null,
+    )
+
+    if (nearestCooldown !== null) {
+      const retryInMs = Math.max(1_000, nearestCooldown - now)
+      const retryInMinutes = Math.ceil(retryInMs / 60_000)
+
+      throw new AiServiceError(
+        `Все доступные AI-провайдеры временно упёрлись в лимиты. Попробуй снова примерно через ${retryInMinutes} мин.`,
+        {
+          status: 429,
+          code: 'ai_upstream_error',
+          details: {
+            provider: 'router',
+            retryAfterMs: retryInMs,
+            task,
+            providers: cooldownEntries.map((entry) => entry.provider.name),
+          },
+        },
+      )
+    }
+
     return eligibleProviders
   }
 
@@ -324,9 +393,12 @@ const withProviderFallback = async <T>(
     const provider = taskProviders[index]
 
     try {
-      return await run(provider)
+      const result = await run(provider)
+      markAiProviderAvailable(task, provider.name)
+      return result
     } catch (error) {
       lastError = error
+      markAiProviderFailure(task, provider.name, error)
 
       const hasNextProvider = index < taskProviders.length - 1
 

@@ -5,11 +5,21 @@ import { storeToRefs } from 'pinia'
 import AppNotice from '@/shared/ui/AppNotice.vue'
 import SurfaceCard from '@/shared/ui/SurfaceCard.vue'
 import { useAnalyticsStore } from '@/stores/analytics'
+import type {
+  AiAnalyticsFriendlyBudget,
+  AiAnalyticsProviderRuntimeStatus,
+} from '@/types'
 
 const analyticsStore = useAnalyticsStore()
 const { aiSnapshot, hasLoaded, isLoading, loadError } = storeToRefs(analyticsStore)
 
 const numberFormatter = new Intl.NumberFormat('ru-RU')
+const dateTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
+  day: '2-digit',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+})
 
 const formatNumber = (value: number | null | undefined): string => {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -17,6 +27,39 @@ const formatNumber = (value: number | null | undefined): string => {
   }
 
   return numberFormatter.format(value)
+}
+
+const formatDateTime = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—'
+  }
+
+  const parsed = new Date(value)
+
+  if (Number.isNaN(parsed.getTime())) {
+    return '—'
+  }
+
+  return dateTimeFormatter.format(parsed)
+}
+
+const formatRetryAfter = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null
+  }
+
+  const totalMinutes = Math.ceil(value / 60_000)
+
+  if (totalMinutes < 60) {
+    return `примерно ${totalMinutes} мин`
+  }
+
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+
+  return minutes > 0
+    ? `примерно ${hours} ч ${minutes} мин`
+    : `примерно ${hours} ч`
 }
 
 const taskLabels = {
@@ -28,20 +71,20 @@ const taskLabels = {
 
 const budgetMetaById = {
   question_generation: {
-    title: 'Осталось генераций вопросов',
-    detail: 'Если тратить доступный запас только на новые вопросы.',
+    title: 'Генерация вопросов',
+    detail: 'Запас по текстовым вызовам для новых вопросов.',
   },
   answer_evaluation: {
-    title: 'Осталось проверок ответов',
-    detail: 'Если тратить доступный запас только на проверку ответа.',
+    title: 'Проверка ответов',
+    detail: 'Запас по текстовым вызовам для оценки ответов.',
   },
   image_analysis: {
-    title: 'Осталось анализов скриншотов',
-    detail: 'Сколько ещё скриншотов можно прогнать через OCR и описание.',
+    title: 'Анализ скриншотов',
+    detail: 'Запас по image-вызовам для OCR и описания скринов.',
   },
   note_organization: {
-    title: 'Осталось AI-сортировок конспекта',
-    detail: 'Сколько ещё раз можно перегруппировать полотно темы через AI.',
+    title: 'Упорядочивание конспекта',
+    detail: 'Запас по текстовым вызовам для AI-сортировки заметки.',
   },
 } as const
 
@@ -57,22 +100,140 @@ const channelLabels = {
   image: 'Скриншоты',
 } as const
 
+const runtimeStateMeta: Record<
+  AiAnalyticsProviderRuntimeStatus['state'],
+  { label: string; tone: string }
+> = {
+  available: {
+    label: 'Провайдер доступен',
+    tone: 'success',
+  },
+  rate_limited: {
+    label: 'Провайдер упёрся в rate limit',
+    tone: 'warning',
+  },
+  quota_exhausted: {
+    label: 'Квота провайдера исчерпана',
+    tone: 'danger',
+  },
+  temporarily_unavailable: {
+    label: 'Провайдер временно перегружен',
+    tone: 'warning',
+  },
+  error: {
+    label: 'Последний вызов завершился ошибкой',
+    tone: 'danger',
+  },
+}
+
 const windowLabel = computed(() => {
   const hours = aiSnapshot.value?.windowHours ?? 24
   return `за последние ${hours} ч`
 })
 
+const buildRuntimeSummary = (
+  runtimeStatus: AiAnalyticsProviderRuntimeStatus | null,
+): string | null => {
+  if (!runtimeStatus) {
+    return null
+  }
+
+  const parts: string[] = []
+
+  if (runtimeStatus.limitDimension !== 'unknown') {
+    parts.push(
+      runtimeStatus.limitDimension === 'tokens' ? 'лимит по токенам' : 'лимит по запросам',
+    )
+  }
+
+  if (runtimeStatus.window !== 'unknown') {
+    parts.push(
+      runtimeStatus.window === 'day' ? 'за день' : 'за минуту',
+    )
+  }
+
+  if (
+    runtimeStatus.limitValue !== null ||
+    runtimeStatus.usedValue !== null ||
+    runtimeStatus.requestedValue !== null
+  ) {
+    parts.push(
+      [
+        runtimeStatus.limitValue !== null ? `limit ${formatNumber(runtimeStatus.limitValue)}` : null,
+        runtimeStatus.usedValue !== null ? `used ${formatNumber(runtimeStatus.usedValue)}` : null,
+        runtimeStatus.requestedValue !== null
+          ? `requested ${formatNumber(runtimeStatus.requestedValue)}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    )
+  }
+
+  const retryLabel = formatRetryAfter(runtimeStatus.retryAfterMs)
+
+  if (retryLabel) {
+    parts.push(`повторить ${retryLabel}`)
+  }
+
+  return parts.filter(Boolean).join(' · ') || runtimeStatus.message
+}
+
+const buildBudgetStatus = (budget: AiAnalyticsFriendlyBudget) => {
+  if (budget.availabilityState === 'blocked') {
+    return {
+      value: 'Сейчас канал упёрся в лимит',
+      tone: 'danger',
+      detail:
+        budget.availabilityMessage ??
+        'Приложение сейчас не может гарантировать новые вызовы по этому каналу.',
+    }
+  }
+
+  if (budget.availabilityState === 'degraded') {
+    return {
+      value:
+        budget.remaining24h === null
+          ? 'Локальная оценка недоступна'
+          : `~${formatNumber(budget.remaining24h)}`,
+      tone: 'warning',
+      detail:
+        budget.availabilityMessage ??
+        'Часть провайдеров для этого канала сейчас ограничена.',
+    }
+  }
+
+  if (budget.remaining24h === null) {
+    return {
+      value: 'Локальная оценка не задана',
+      tone: 'neutral',
+      detail: budget.availabilityMessage,
+    }
+  }
+
+  return {
+    value: `~${formatNumber(budget.remaining24h)}`,
+    tone: 'neutral',
+    detail: budget.availabilityMessage,
+  }
+}
+
 const budgetCards = computed(() =>
-  (aiSnapshot.value?.friendlyBudgets ?? []).map((budget) => ({
-    id: budget.id,
-    title: budgetMetaById[budget.id].title,
-    detail: budgetMetaById[budget.id].detail,
-    remainingLabel:
-      budget.remaining24h === null ? 'Лимит не задан' : formatNumber(budget.remaining24h),
-    usedLabel: formatNumber(budget.used24h),
-    limitLabel:
-      budget.limit24h === null ? 'не задан' : formatNumber(budget.limit24h),
-  })),
+  (aiSnapshot.value?.friendlyBudgets ?? []).map((budget) => {
+    const status = buildBudgetStatus(budget)
+
+    return {
+      id: budget.id,
+      title: budgetMetaById[budget.id].title,
+      detail: budgetMetaById[budget.id].detail,
+      value: status.value,
+      tone: status.tone,
+      providerMessage: status.detail,
+      usedLabel: formatNumber(budget.used24h),
+      limitLabel:
+        budget.limit24h === null ? 'не задан' : formatNumber(budget.limit24h),
+    }
+  }),
 )
 
 const rawMetricCards = computed(() => {
@@ -81,19 +242,19 @@ const rawMetricCards = computed(() => {
 
   return [
     {
-      label: `Запросов ${windowLabel.value}`,
+      label: `Успешных запросов ${windowLabel.value}`,
       value: formatNumber(overview?.lastWindow.requests ?? 0),
-      detail: 'Все успешные AI-операции в окне аналитики.',
+      detail: 'Только те AI-вызовы, которые приложение записало как успешные.',
     },
     {
       label: `Input tokens ${windowLabel.value}`,
       value: formatNumber(overview?.lastWindow.inputTokens ?? 0),
-      detail: 'Текст и контекст, отправленные в модели.',
+      detail: 'Текст и контекст, отправленные в модели по успешным вызовам.',
     },
     {
       label: `Output tokens ${windowLabel.value}`,
       value: formatNumber(overview?.lastWindow.outputTokens ?? 0),
-      detail: 'Ответы, которые вернули модели.',
+      detail: 'Ответы моделей по успешным вызовам.',
     },
     {
       label: `Всего tokens ${windowLabel.value}`,
@@ -101,14 +262,14 @@ const rawMetricCards = computed(() => {
       detail: 'Суммарный токеновый расход по успешным вызовам.',
     },
     {
-      label: 'Запросов за всё время',
+      label: 'Успешных запросов за всё время',
       value: formatNumber(overview?.allTime.requests ?? 0),
-      detail: 'Все зафиксированные AI-операции с момента начала учёта.',
+      detail: 'История, которую приложение успело сохранить у себя.',
     },
     {
       label: 'Скриншотов готово',
       value: formatNumber(attachments?.ready ?? 0),
-      detail: 'Вложения, которые уже можно полноценно использовать в вопросах.',
+      detail: 'Вложения, которые уже можно использовать в вопросах и AI-сортировке.',
     },
   ]
 })
@@ -123,22 +284,31 @@ const taskCards = computed(() =>
 )
 
 const channelCards = computed(() =>
-  (aiSnapshot.value?.channels ?? []).map((channel) => ({
-    key: `${channel.provider}:${channel.channel}`,
-    providerLabel: providerLabels[channel.provider] ?? channel.provider,
-    channelLabel: channelLabels[channel.channel],
-    used24h: formatNumber(channel.used24h),
-    usedAllTime: formatNumber(channel.usedAllTime),
-    limit24h: channel.limit24h === null ? 'не задан' : formatNumber(channel.limit24h),
-    remaining24h:
-      channel.remaining24h === null
-        ? 'неизвестно'
-        : formatNumber(channel.remaining24h),
-    inputTokens: formatNumber(channel.inputTokens),
-    outputTokens: formatNumber(channel.outputTokens),
-    totalTokens: formatNumber(channel.totalTokens),
-    models: channel.models,
-  })),
+  (aiSnapshot.value?.channels ?? []).map((channel) => {
+    const runtimeMeta = channel.runtimeStatus
+      ? runtimeStateMeta[channel.runtimeStatus.state]
+      : null
+
+    return {
+      key: `${channel.provider}:${channel.channel}`,
+      providerLabel: providerLabels[channel.provider] ?? channel.provider,
+      channelLabel: channelLabels[channel.channel],
+      used24h: formatNumber(channel.used24h),
+      usedAllTime: formatNumber(channel.usedAllTime),
+      limit24h: channel.limit24h === null ? 'не задан' : formatNumber(channel.limit24h),
+      remaining24h:
+        channel.remaining24h === null ? 'неизвестно' : formatNumber(channel.remaining24h),
+      inputTokens: formatNumber(channel.inputTokens),
+      outputTokens: formatNumber(channel.outputTokens),
+      totalTokens: formatNumber(channel.totalTokens),
+      models: channel.models,
+      runtimeLabel: runtimeMeta?.label ?? 'Живой статус провайдера пока не зафиксирован',
+      runtimeTone: runtimeMeta?.tone ?? 'neutral',
+      runtimeSummary: buildRuntimeSummary(channel.runtimeStatus),
+      runtimeUpdatedAt: formatDateTime(channel.runtimeStatus?.updatedAt),
+      runtimeMessage: channel.runtimeStatus?.message ?? null,
+    }
+  }),
 )
 
 const attachmentCards = computed(() => {
@@ -181,8 +351,8 @@ onMounted(async () => {
   <div class="page-stack analytics-page">
     <SurfaceCard eyebrow="AI" title="Лимиты и использование">
       <p class="lead">
-        Здесь видно, сколько AI уже использовано, какой запас ещё остался и на
-        что он может уйти.
+        Здесь видно две разные вещи: локальный учёт приложения по успешным вызовам и
+        живой статус лимитов у самих провайдеров.
       </p>
 
       <AppNotice
@@ -213,15 +383,15 @@ onMounted(async () => {
       <AppNotice
         v-else-if="aiSnapshot"
         tone="info"
-        title="Как считать эти цифры"
-        :message="`Остатки считаются по истории успешных запросов и лимитам, настроенным на сервере, ${windowLabel}.`"
+        title="Как читать цифры"
+        :message="`Числа вида “~8” и “лимит 20” — это только локальная оценка приложения по успешным вызовам ${windowLabel}. Реальный провайдер может упереться раньше в внешнюю квоту, rate limit или токены.`"
       />
     </SurfaceCard>
 
     <SurfaceCard
       v-if="aiSnapshot"
-      eyebrow="Понятно"
-      title="Сколько ещё можно сделать"
+      eyebrow="Оценка приложения"
+      title="Примерный запас по нашим счётчикам"
     >
       <div class="analytics-page__budget-grid">
         <article
@@ -230,11 +400,20 @@ onMounted(async () => {
           class="analytics-page__budget-card"
         >
           <span class="analytics-page__card-label">{{ budget.title }}</span>
-          <strong class="analytics-page__budget-value">{{ budget.remainingLabel }}</strong>
+          <strong
+            class="analytics-page__budget-value"
+            :class="`analytics-page__budget-value--${budget.tone}`"
+          >
+            {{ budget.value }}
+          </strong>
           <p class="analytics-page__budget-meta">
-            Использовано {{ budget.usedLabel }} из {{ budget.limitLabel }} {{ windowLabel }}
+            По локальному счётчику: использовано {{ budget.usedLabel }} из
+            {{ budget.limitLabel }} {{ windowLabel }}
           </p>
           <p class="analytics-page__card-copy">{{ budget.detail }}</p>
+          <p v-if="budget.providerMessage" class="analytics-page__provider-copy">
+            {{ budget.providerMessage }}
+          </p>
         </article>
       </div>
     </SurfaceCard>
@@ -242,7 +421,7 @@ onMounted(async () => {
     <SurfaceCard
       v-if="aiSnapshot"
       eyebrow="Сырые метрики"
-      title="Обычные измерения"
+      title="Что приложение успело учесть"
     >
       <div class="summary-grid">
         <article
@@ -280,7 +459,7 @@ onMounted(async () => {
     <SurfaceCard
       v-if="aiSnapshot"
       eyebrow="Провайдеры"
-      title="Разрез по нейросетям"
+      title="Живой статус по нейросетям"
     >
       <div class="analytics-page__channel-list">
         <article
@@ -299,10 +478,34 @@ onMounted(async () => {
             </div>
 
             <div class="analytics-page__channel-pills">
-              <span class="chip">Осталось: {{ channel.remaining24h }}</span>
-              <span class="chip">Лимит: {{ channel.limit24h }}</span>
+              <span class="chip">По счётчику: ~{{ channel.remaining24h }}</span>
+              <span class="chip">Локальный лимит: {{ channel.limit24h }}</span>
             </div>
           </div>
+
+          <div
+            class="analytics-page__runtime-badge"
+            :class="`analytics-page__runtime-badge--${channel.runtimeTone}`"
+          >
+            {{ channel.runtimeLabel }}
+          </div>
+
+          <p v-if="channel.runtimeSummary" class="analytics-page__runtime-copy">
+            {{ channel.runtimeSummary }}
+          </p>
+          <p v-else class="analytics-page__runtime-copy">
+            Провайдер ещё не возвращал явный сигнал о квоте или перегрузке в текущей
+            сессии сервера.
+          </p>
+          <p class="analytics-page__runtime-copy analytics-page__runtime-copy--muted">
+            Последнее обновление: {{ channel.runtimeUpdatedAt }}
+          </p>
+          <p
+            v-if="channel.runtimeMessage"
+            class="analytics-page__runtime-copy analytics-page__runtime-copy--muted"
+          >
+            Последний ответ провайдера: {{ channel.runtimeMessage }}
+          </p>
 
           <div class="analytics-page__channel-stats">
             <span class="tag">За 24ч: {{ channel.used24h }}</span>
@@ -375,17 +578,36 @@ onMounted(async () => {
 
 .analytics-page__budget-value {
   display: block;
-  font-size: 1.42rem;
+  font-size: 1.3rem;
   line-height: 1.08;
   letter-spacing: -0.04em;
 }
 
+.analytics-page__budget-value--danger {
+  color: #b9473d;
+}
+
+.analytics-page__budget-value--warning {
+  color: #a36a12;
+}
+
 .analytics-page__budget-meta,
-.analytics-page__card-copy {
-  margin: 0.3rem 0 0;
+.analytics-page__card-copy,
+.analytics-page__provider-copy,
+.analytics-page__runtime-copy {
+  margin: 0.34rem 0 0;
   color: var(--text-muted);
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.analytics-page__provider-copy,
+.analytics-page__runtime-copy {
+  color: var(--text-color);
+}
+
+.analytics-page__runtime-copy--muted {
+  color: var(--text-muted);
 }
 
 .analytics-page__task-title,
@@ -409,6 +631,33 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.8rem;
+}
+
+.analytics-page__runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 0.82rem;
+  padding: 0.44rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  background: rgba(139, 126, 109, 0.12);
+  color: var(--text-color);
+}
+
+.analytics-page__runtime-badge--success {
+  background: rgba(87, 146, 105, 0.16);
+  color: #2d6b42;
+}
+
+.analytics-page__runtime-badge--warning {
+  background: rgba(205, 142, 38, 0.16);
+  color: #8d5c12;
+}
+
+.analytics-page__runtime-badge--danger {
+  background: rgba(190, 92, 79, 0.16);
+  color: #a24338;
 }
 
 .analytics-page__models {
