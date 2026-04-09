@@ -22,7 +22,7 @@ const loadEnvFile = (filePath: string, override = false): void => {
 loadEnvFile(rootEnvPath)
 loadEnvFile(serverEnvPath, true)
 
-const isAmvera = Boolean(process.env.AMVERA)
+const hasPersistentDataMount = fs.existsSync('/data')
 
 const normalizeAiProvider = (
   value: string | undefined,
@@ -60,10 +60,14 @@ export const SERVER_PORT = Number(process.env.PORT ?? 3000)
 export const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173'
 export const DATABASE_PATH =
   process.env.DATABASE_PATH ??
-  (isAmvera ? '/data/app.db' : path.join(SERVER_ROOT, 'data', 'app.db'))
+  (hasPersistentDataMount
+    ? '/data/app.db'
+    : path.join(SERVER_ROOT, 'data', 'app.db'))
 export const UPLOADS_DIR =
   process.env.UPLOADS_DIR ??
-  (isAmvera ? '/data/uploads' : path.join(SERVER_ROOT, 'uploads'))
+  (hasPersistentDataMount
+    ? '/data/uploads'
+    : path.join(SERVER_ROOT, 'uploads'))
 export const SCHEMA_PATH = path.join(SERVER_ROOT, 'schema.sql')
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
 export const OPENAI_IMAGE_ANALYSIS_MODEL =

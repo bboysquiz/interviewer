@@ -1,7 +1,10 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 
-import { knowledgeBaseApi } from '@/services/client/knowledgeBaseApi'
+import {
+  knowledgeBaseApi,
+  type AnalyzeAttachmentResponse,
+} from '@/services/client/knowledgeBaseApi'
 import type { Attachment } from '@/types'
 
 import { useKnowledgeBaseStore } from './knowledgeBase'
@@ -15,6 +18,16 @@ const sortAttachments = (value: Attachment[]): Attachment[] =>
 
     return right.updatedAt.localeCompare(left.updatedAt)
   })
+
+const delay = async (milliseconds: number): Promise<void> => {
+  if (milliseconds <= 0) {
+    return
+  }
+
+  await new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds)
+  })
+}
 
 export const useAttachmentsStore = defineStore('attachments', () => {
   const attachmentsByNote = ref<Record<string, Attachment[]>>({})
@@ -88,7 +101,7 @@ export const useAttachmentsStore = defineStore('attachments', () => {
   const analyzeAttachment = async (
     attachmentId: string,
     options: { force?: boolean } = {},
-  ): Promise<Attachment | null> => {
+  ): Promise<AnalyzeAttachmentResponse> => {
     if (!attachmentId) {
       throw new Error('Не указан идентификатор вложения.')
     }
@@ -106,7 +119,7 @@ export const useAttachmentsStore = defineStore('attachments', () => {
         upsertAttachment(response.attachment)
       }
 
-      return response.attachment
+      return response
     } catch (error) {
       analysisErrors.value[attachmentId] =
         error instanceof Error
@@ -120,16 +133,18 @@ export const useAttachmentsStore = defineStore('attachments', () => {
 
   const analyzeAttachments = async (
     attachmentIds: string[],
-    options: { force?: boolean; concurrency?: number } = {},
-  ): Promise<void> => {
+    options: { force?: boolean; concurrency?: number; delayMs?: number } = {},
+  ): Promise<AnalyzeAttachmentResponse[]> => {
     const uniqueAttachmentIds = [...new Set(attachmentIds.filter(Boolean))]
 
     if (uniqueAttachmentIds.length === 0) {
-      return
+      return []
     }
 
     const concurrency = Math.max(1, options.concurrency ?? 3)
+    const delayMs = Math.max(0, options.delayMs ?? 0)
     let nextIndex = 0
+    const results: AnalyzeAttachmentResponse[] = []
 
     const runWorker = async (): Promise<void> => {
       while (nextIndex < uniqueAttachmentIds.length) {
@@ -138,10 +153,15 @@ export const useAttachmentsStore = defineStore('attachments', () => {
         const attachmentId = uniqueAttachmentIds[currentIndex]
 
         try {
-          await analyzeAttachment(attachmentId, { force: options.force })
+          const response = await analyzeAttachment(attachmentId, {
+            force: options.force,
+          })
+          results.push(response)
         } catch {
           // Per-attachment errors are already stored in the analysis state.
         }
+
+        await delay(delayMs)
       }
     }
 
@@ -151,6 +171,8 @@ export const useAttachmentsStore = defineStore('attachments', () => {
         () => runWorker(),
       ),
     )
+
+    return results
   }
 
   const uploadAttachments = async (

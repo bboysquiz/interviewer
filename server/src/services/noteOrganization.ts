@@ -26,6 +26,12 @@ interface OrganizeExistingNoteInput {
   attachmentsById: Record<string, NoteOrganizationAttachmentContext>
 }
 
+const MAX_ORGANIZATION_TOTAL_CHARS = 5200
+const MIN_BLOCK_SNIPPET_CHARS = 48
+const MAX_TEXT_BLOCK_CHARS = 160
+const MAX_IMAGE_TEXT_CHARS = 96
+const MAX_IMAGE_DESCRIPTION_CHARS = 72
+
 export interface OrganizeExistingNoteResult
   extends OrganizeKnowledgeBaseNoteResult {
   contentBlocks: NoteContentBlock[]
@@ -33,6 +39,23 @@ export interface OrganizeExistingNoteResult
 }
 
 const uniqueIndexes = (indexes: number[]): number[] => [...new Set(indexes)]
+
+const normalizeInlineText = (value: string | null | undefined): string =>
+  (value ?? '').replace(/\s+/g, ' ').trim()
+
+const truncateText = (value: string, maxChars: number): string => {
+  if (value.length <= maxChars) {
+    return value
+  }
+
+  return `${value.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`
+}
+
+const estimatePerBlockBudget = (blockCount: number): number =>
+  Math.max(
+    MIN_BLOCK_SNIPPET_CHARS,
+    Math.floor(MAX_ORGANIZATION_TOTAL_CHARS / Math.max(blockCount, 1)),
+  )
 
 const normalizeSectionTitle = (value: string): string => {
   const normalized = value.trim()
@@ -61,29 +84,55 @@ const stripGeneratedSectionHeadingBlocks = (
 const buildOrganizationInput = (
   input: OrganizeExistingNoteInput,
   blocks: NoteContentBlock[],
-): OrganizeKnowledgeBaseNoteInput => ({
-  categoryName: input.categoryName ?? null,
-  noteTitle: input.noteTitle ?? null,
-  blocks: blocks.map((block) => {
-    if (block.type === 'text') {
+): OrganizeKnowledgeBaseNoteInput => {
+  const perBlockBudget = estimatePerBlockBudget(blocks.length)
+
+  return {
+    categoryName: input.categoryName ?? null,
+    noteTitle: input.noteTitle ?? null,
+    blocks: blocks.map((block) => {
+      if (block.type === 'text') {
+        const normalizedText = normalizeInlineText(block.text)
+
+        return {
+          id: block.id,
+          type: 'text',
+          text: truncateText(
+            normalizedText,
+            Math.min(MAX_TEXT_BLOCK_CHARS, perBlockBudget * 2),
+          ),
+        }
+      }
+
+      const attachment = input.attachmentsById[block.attachmentId]
+      const normalizedExtractedText = normalizeInlineText(attachment?.extractedText)
+      const normalizedDescription = normalizeInlineText(
+        attachment?.imageDescription,
+      )
+
       return {
         id: block.id,
-        type: 'text',
-        text: block.text,
+        type: 'image',
+        fileName: attachment?.originalFileName ?? null,
+        extractedText: normalizedExtractedText
+          ? truncateText(
+              normalizedExtractedText,
+              Math.min(MAX_IMAGE_TEXT_CHARS, perBlockBudget),
+            )
+          : null,
+        imageDescription: normalizedDescription
+          ? truncateText(
+              normalizedDescription,
+              Math.min(
+                MAX_IMAGE_DESCRIPTION_CHARS,
+                Math.max(MIN_BLOCK_SNIPPET_CHARS, Math.floor(perBlockBudget * 0.75)),
+              ),
+            )
+          : null,
       }
-    }
-
-    const attachment = input.attachmentsById[block.attachmentId]
-
-    return {
-      id: block.id,
-      type: 'image',
-      fileName: attachment?.originalFileName ?? null,
-      extractedText: attachment?.extractedText ?? null,
-      imageDescription: attachment?.imageDescription ?? null,
-    }
-  }),
-})
+    }),
+  }
+}
 
 const buildOrganizedContentBlocks = (
   blocks: NoteContentBlock[],

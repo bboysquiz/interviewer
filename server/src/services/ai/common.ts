@@ -293,7 +293,7 @@ export const buildInterviewEvaluationUserPrompt = (
     .filter(Boolean)
     .join('\n\n')
 
-const buildOrganizationBlockDescriptor = (
+const buildOrganizationBlockDescriptorLegacy = (
   block: OrganizeKnowledgeBaseNoteInput['blocks'][number],
   index: number,
 ): string => {
@@ -318,6 +318,35 @@ const buildOrganizationBlockDescriptor = (
     .join('\n')
 }
 
+void buildOrganizationBlockDescriptorLegacy
+
+const buildOrganizationBlockDescriptor = (
+  block: OrganizeKnowledgeBaseNoteInput['blocks'][number],
+  index: number,
+): string => {
+  if (block.type === 'text') {
+    return [`[${index + 1}] TEXT`, block.text?.trim() || 'Empty text block.'].join(
+      '\n',
+    )
+  }
+
+  const lines = [`[${index + 1}] IMAGE`]
+
+  if (block.extractedText?.trim()) {
+    lines.push(`OCR: ${block.extractedText.trim()}`)
+  }
+
+  if (block.imageDescription?.trim()) {
+    lines.push(`Desc: ${block.imageDescription.trim()}`)
+  }
+
+  if (lines.length === 1) {
+    lines.push('No AI analysis yet.')
+  }
+
+  return lines.join('\n')
+}
+
 export const buildNoteOrganizationSystemPrompt = (): string =>
   [
     'You organize a user note into clear topical sections.',
@@ -339,7 +368,7 @@ export const buildNoteOrganizationUserPrompt = (
     input.categoryName ? `Category: ${input.categoryName}` : null,
     input.noteTitle ? `Note title: ${input.noteTitle}` : null,
     'Group the following note blocks into clean sections.',
-    'Use every block at most once and return only strict JSON.',
+    'Use each block exactly once and return only strict JSON.',
     'Source blocks:',
     input.blocks
       .map((block, index) => buildOrganizationBlockDescriptor(block, index))

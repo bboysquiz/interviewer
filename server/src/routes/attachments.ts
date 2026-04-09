@@ -265,14 +265,6 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
     const attachment = getAttachmentById(id)
 
     response.status(201).json(attachment)
-
-    if (!hasAnalysisData) {
-      queueMicrotask(() => {
-        void analyzeAttachmentWithOpenAI(db, id).catch(() => {
-          // The analysis service writes the failed state into the database.
-        })
-      })
-    }
   })
 
   router.patch('/:id/processing', (request, response) => {

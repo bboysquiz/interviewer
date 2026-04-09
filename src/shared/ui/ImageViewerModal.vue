@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useImageViewer } from '@/features/images/imageViewer'
 
@@ -21,8 +21,37 @@ const {
 
 let pinchStartDistance = 0
 let pinchStartScale = minScale
+const stageElement = ref<HTMLElement | null>(null)
+const stageWidth = ref(0)
+const naturalImageWidth = ref(0)
+let stageResizeObserver: ResizeObserver | null = null
+let observedStageElement: HTMLElement | null = null
 
-const imageWidth = computed(() => `${Math.round(scale.value * 100)}%`)
+const updateStageWidth = (): void => {
+  stageWidth.value = Math.max((stageElement.value?.clientWidth ?? 0) - 32, 240)
+}
+
+const observeStageElement = (element: HTMLElement | null): void => {
+  if (observedStageElement && stageResizeObserver) {
+    stageResizeObserver.unobserve(observedStageElement)
+  }
+
+  observedStageElement = element
+
+  if (element && stageResizeObserver) {
+    stageResizeObserver.observe(element)
+    updateStageWidth()
+  }
+}
+
+const imageWidth = computed(() => {
+  if (!naturalImageWidth.value || !stageWidth.value) {
+    return `${Math.round(scale.value * 100)}%`
+  }
+
+  const baseWidth = Math.min(naturalImageWidth.value, stageWidth.value)
+  return `${Math.max(180, Math.round(baseWidth * scale.value))}px`
+})
 const zoomPercent = computed(() => `${Math.round(scale.value * 100)}%`)
 const canZoomOut = computed(() => scale.value > minScale)
 const canZoomIn = computed(() => scale.value < maxScale)
@@ -77,6 +106,13 @@ const resetPinchState = (): void => {
   pinchStartScale = minScale
 }
 
+const handleImageLoad = (event: Event): void => {
+  const image = event.target as HTMLImageElement | null
+
+  naturalImageWidth.value = image?.naturalWidth ?? 0
+  updateStageWidth()
+}
+
 const handleKeydown = (event: KeyboardEvent): void => {
   if (!isOpen.value) {
     return
@@ -107,29 +143,50 @@ const handleKeydown = (event: KeyboardEvent): void => {
 
 watch(
   isOpen,
-  (value) => {
+  async (value) => {
     if (typeof document === 'undefined') {
       return
     }
 
     if (value) {
       document.body.style.overflow = 'hidden'
+      await nextTick()
+      updateStageWidth()
       window.addEventListener('keydown', handleKeydown)
       return
     }
 
     document.body.style.overflow = ''
     window.removeEventListener('keydown', handleKeydown)
+    naturalImageWidth.value = 0
     resetPinchState()
   },
   { immediate: true },
 )
+
+watch(stageElement, (value) => {
+  observeStageElement(value)
+})
+
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined') {
+    return
+  }
+
+  stageResizeObserver = new ResizeObserver(() => {
+    updateStageWidth()
+  })
+  observeStageElement(stageElement.value)
+})
 
 onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.body.style.overflow = ''
   }
 
+  stageResizeObserver?.disconnect()
+  stageResizeObserver = null
+  observedStageElement = null
   window.removeEventListener('keydown', handleKeydown)
   resetPinchState()
 })
@@ -198,6 +255,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
+          ref="stageElement"
           class="image-viewer__stage"
           @wheel="handleWheelZoom"
         >
@@ -211,6 +269,7 @@ onBeforeUnmount(() => {
             :style="{
               width: imageWidth,
             }"
+            @load="handleImageLoad"
             @click.stop="toggleScale()"
             @touchstart.passive="handleTouchStart"
             @touchmove="handleTouchMove"

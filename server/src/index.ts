@@ -6,6 +6,7 @@ import express from 'express'
 
 import {
   CLIENT_ORIGIN,
+  DATABASE_PATH,
   SERVER_HOST,
   SERVER_PORT,
   SERVER_ROOT,
@@ -39,6 +40,7 @@ app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
     database: 'sqlite',
+    databasePath: DATABASE_PATH,
     uploadsDir: UPLOADS_DIR,
   })
 })
@@ -90,6 +92,8 @@ const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
   const port = address?.port ?? SERVER_PORT
 
   console.log(`Backend listening on http://${host}:${port}`)
+  console.log(`SQLite database path: ${DATABASE_PATH}`)
+  console.log(`Uploads directory: ${UPLOADS_DIR}`)
 })
 
 server.on('error', (error) => {

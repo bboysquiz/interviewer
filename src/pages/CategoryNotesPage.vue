@@ -67,6 +67,17 @@ const normalizeProcessingError = (
   }
 
   if (
+    ['request too large', 'context length', 'tokens per minute', 'tpm'].some(
+      (pattern) => lowerCased.includes(pattern),
+    )
+  ) {
+    return {
+      key: 'context_too_large',
+      label: 'Контекст или пакет данных слишком большой для текущей модели',
+    }
+  }
+
+  if (
     [
       'quota',
       'rate limit',
@@ -131,6 +142,70 @@ const normalizeProcessingError = (
   }
 }
 
+const pluralizeScreenshots = (count: number): string => {
+  const remainderTen = count % 10
+  const remainderHundred = count % 100
+
+  if (remainderTen === 1 && remainderHundred !== 11) {
+    return 'скриншот'
+  }
+
+  if (
+    remainderTen >= 2 &&
+    remainderTen <= 4 &&
+    (remainderHundred < 12 || remainderHundred > 14)
+  ) {
+    return 'скриншота'
+  }
+
+  return 'скриншотов'
+}
+
+const formatAiModelLabel = (value: string | null | undefined): string | null => {
+  const normalized = value?.trim() ?? ''
+
+  if (!normalized) {
+    return null
+  }
+
+  const separatorIndex = normalized.indexOf(':')
+
+  if (separatorIndex <= 0) {
+    return normalized
+  }
+
+  const provider = normalized.slice(0, separatorIndex)
+  const model = normalized.slice(separatorIndex + 1)
+  const providerLabel =
+    provider === 'gemini'
+      ? 'Gemini'
+      : provider === 'groq'
+        ? 'Groq'
+        : provider === 'openai'
+          ? 'OpenAI'
+          : provider
+
+  return `${providerLabel} · ${model}`
+}
+
+const formatAiModelLabels = (
+  values: Array<string | null | undefined>,
+): string | null => {
+  const labels = [
+    ...new Set(
+      values
+        .map((value) => formatAiModelLabel(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ]
+
+  if (labels.length === 0) {
+    return null
+  }
+
+  return labels.join(', ')
+}
+
 const route = useRoute()
 const router = useRouter()
 const knowledgeBaseStore = useKnowledgeBaseStore()
@@ -181,10 +256,15 @@ const saveError = ref<string | null>(null)
 const importError = ref<string | null>(null)
 const importSummary = ref<string | null>(null)
 const pendingImportSummary = ref<string | null>(null)
+const noteAnalysisError = ref<string | null>(null)
+const noteAnalysisSummary = ref<string | null>(null)
+const noteAnalysisModelLabel = ref<string | null>(null)
 const organizeError = ref<string | null>(null)
 const organizeSummary = ref<string | null>(null)
+const organizeModelLabel = ref<string | null>(null)
 const isSaving = ref(false)
 const isImporting = ref(false)
+const isAnalyzingNote = ref(false)
 const isOrganizing = ref(false)
 const importFolderInput = ref<HTMLInputElement | null>(null)
 const undoStack = ref<NoteFormValues[]>([])
@@ -201,15 +281,27 @@ const showCategoryNotFound = computed(
 
 const attachmentsInAnalysis = computed(() =>
   notebookAttachments.value.filter(
-    (attachment) =>
-      attachment.processingStatus === 'pending' ||
-      attachment.processingStatus === 'processing',
+    (attachment) => attachment.processingStatus === 'processing',
+  ),
+)
+
+const pendingAttachments = computed(() =>
+  notebookAttachments.value.filter(
+    (attachment) => attachment.processingStatus === 'pending',
   ),
 )
 
 const failedAttachments = computed(() =>
   notebookAttachments.value.filter(
     (attachment) => attachment.processingStatus === 'failed',
+  ),
+)
+
+const noteAttachmentsNeedingAnalysis = computed(() =>
+  notebookAttachments.value.filter(
+    (attachment) =>
+      attachment.processingStatus === 'pending' ||
+      attachment.processingStatus === 'failed',
   ),
 )
 
@@ -244,6 +336,10 @@ const isAnyAttachmentRetryRunning = computed(() =>
   failedAttachments.value.some(
     (attachment) => analysisLoadingState.value[attachment.id] ?? false,
   ),
+)
+
+const hasScreenshotBlocks = computed(() =>
+  notebookForm.value.blocks.some((block) => block.type === 'image'),
 )
 
 const formFingerprint = computed(() => createNoteFormFingerprint(notebookForm.value))
@@ -293,13 +389,34 @@ const analysisStatusTitle = computed(() => {
   return `AI анализирует ${count} скриншотов темы`
 })
 
-const analysisStatusMessage = computed(() =>
+const legacyAnalysisStatusMessage = computed(() =>
   attachmentsInAnalysis.value.some(
     (attachment) => attachment.processingStatus === 'processing',
   )
     ? 'Извлекаем текст и краткое описание из скриншотов. Когда анализ завершится, вопросы начнут учитывать и их содержимое.'
     : 'Скриншоты уже прикреплены к теме и ждут своей очереди на анализ.',
 )
+
+void legacyAnalysisStatusMessage
+
+const analysisStatusMessage = computed(
+  () =>
+    'Извлекаем текст и краткое описание из скриншотов. Когда анализ завершится, вопросы и AI-сортировка начнут лучше учитывать их содержимое.',
+)
+
+const pendingAnalysisMessage = computed(() => {
+  const count = pendingAttachments.value.length
+
+  if (!count) {
+    return null
+  }
+
+  if (count === 1) {
+    return 'Есть 1 скриншот без AI-анализа. Пока он не обработан, вопросы и упорядочивание конспекта будут опираться в основном на текст.'
+  }
+
+  return `Есть ${count} ${pluralizeScreenshots(count)} без AI-анализа. Пока они не обработаны, вопросы и упорядочивание конспекта будут опираться в основном на текст.`
+})
 
 const failedAnalysisMessage = computed(() => {
   const count = failedAttachments.value.length
@@ -590,15 +707,134 @@ const refreshAttachmentStatuses = async (): Promise<void> => {
   })
 }
 
+const analyzeAttachmentSet = async (
+  attachmentIds: string[],
+  options: {
+    emptyMessage: string
+    allFailedMessage: string
+  },
+): Promise<void> => {
+  noteAnalysisError.value = null
+  noteAnalysisSummary.value = null
+  noteAnalysisModelLabel.value = null
+
+  if (attachmentIds.length === 0) {
+    noteAnalysisSummary.value = options.emptyMessage
+    noteAnalysisModelLabel.value = formatAiModelLabels(
+      notebookAttachments.value.map((attachment) => attachment.analysisModel),
+    )
+    return
+  }
+
+  isAnalyzingNote.value = true
+
+  try {
+    const responses = await attachmentsStore.analyzeAttachments(attachmentIds, {
+      force: true,
+      concurrency: 1,
+      delayMs: 1500,
+    })
+
+    await refreshAttachmentStatuses()
+
+    const completedCount = responses.filter(
+      (response) => response.analysis.status === 'completed',
+    ).length
+    const skippedCount = responses.filter(
+      (response) => response.analysis.status === 'skipped',
+    ).length
+    const failedCount = Math.max(attachmentIds.length - responses.length, 0)
+
+    noteAnalysisModelLabel.value = formatAiModelLabels(
+      attachmentIds.map(
+        (attachmentId) => attachmentsById.value[attachmentId]?.analysisModel,
+      ),
+    )
+
+    if (completedCount === 0 && skippedCount === 0) {
+      noteAnalysisError.value = options.allFailedMessage
+      return
+    }
+
+    const summaryParts: string[] = []
+
+    if (completedCount > 0) {
+      summaryParts.push(
+        `Проанализировано ${completedCount} ${pluralizeScreenshots(completedCount)}`,
+      )
+    }
+
+    if (skippedCount > 0) {
+      summaryParts.push(
+        `без изменений оставлено ${skippedCount} ${pluralizeScreenshots(skippedCount)}`,
+      )
+    }
+
+    if (failedCount > 0) {
+      summaryParts.push(
+        `ещё ${failedCount} ${pluralizeScreenshots(failedCount)} требуют повторной попытки`,
+      )
+    }
+
+    noteAnalysisSummary.value = `${summaryParts.join('. ')}.`
+  } catch (error) {
+    noteAnalysisError.value =
+      error instanceof Error
+        ? error.message
+        : 'Не удалось запустить AI-анализ конспекта.'
+  } finally {
+    isAnalyzingNote.value = false
+  }
+}
+
+const analyzeNotebook = async (): Promise<void> => {
+  if (
+    showCategoryNotFound.value ||
+    isSaving.value ||
+    isImporting.value ||
+    isOrganizing.value ||
+    isAnalyzingNote.value
+  ) {
+    return
+  }
+
+  noteAnalysisError.value = null
+  noteAnalysisSummary.value = null
+  noteAnalysisModelLabel.value = null
+
+  if (!hasScreenshotBlocks.value) {
+    noteAnalysisError.value = 'В теме пока нет скриншотов для AI-анализа.'
+    return
+  }
+
+  if (isDirty.value || !notebookNote.value) {
+    await saveNotebook()
+
+    if (saveError.value || !notebookNote.value) {
+      return
+    }
+  }
+
+  await refreshAttachmentStatuses()
+
+  await analyzeAttachmentSet(
+    noteAttachmentsNeedingAnalysis.value.map((attachment) => attachment.id),
+    {
+      emptyMessage: 'Все скриншоты темы уже проанализированы.',
+      allFailedMessage:
+        'Не удалось обработать ни одного скриншота темы. Причины ниже помогут понять, что именно мешает анализу.',
+    },
+  )
+}
+
 const retryFailedAnalyses = async (): Promise<void> => {
   const attachmentsToRetry = failedAttachments.value.map((attachment) => attachment.id)
 
-  await attachmentsStore.analyzeAttachments(attachmentsToRetry, {
-    force: true,
-    concurrency: 3,
+  await analyzeAttachmentSet(attachmentsToRetry, {
+    emptyMessage: 'Все проблемные скриншоты уже переанализированы.',
+    allFailedMessage:
+      'Переанализ не дал успешного результата. Проверь причины ниже и попробуй ещё раз позже.',
   })
-
-  await refreshAttachmentStatuses()
 }
 
 const openImportFolderPicker = async (): Promise<void> => {
@@ -732,13 +968,15 @@ const organizeNotebook = async (): Promise<void> => {
     showCategoryNotFound.value ||
     isSaving.value ||
     isImporting.value ||
-    isOrganizing.value
+    isOrganizing.value ||
+    isAnalyzingNote.value
   ) {
     return
   }
 
   organizeError.value = null
   organizeSummary.value = null
+  organizeModelLabel.value = null
 
   if (!hasMeaningfulNotebookContent.value) {
     organizeError.value =
@@ -765,6 +1003,7 @@ const organizeNotebook = async (): Promise<void> => {
     const response = await notesStore.organizeNote(notebookNote.value.id)
 
     hydrateFormFromNotebook(response.note)
+    organizeModelLabel.value = formatAiModelLabel(response.ai.model)
     organizeSummary.value =
       response.organized.sectionCount === 1
         ? 'AI перегруппировал полотно в 1 раздел.'
@@ -813,8 +1052,12 @@ watch(
     importError.value = null
     importSummary.value = null
     pendingImportSummary.value = null
+    noteAnalysisError.value = null
+    noteAnalysisSummary.value = null
+    noteAnalysisModelLabel.value = null
     organizeError.value = null
     organizeSummary.value = null
+    organizeModelLabel.value = null
     hydrateFormFromNotebook(null)
     void loadNotebook()
   },
@@ -852,8 +1095,12 @@ watch(
       return
     }
 
+    noteAnalysisError.value = null
+    noteAnalysisSummary.value = null
+    noteAnalysisModelLabel.value = null
     organizeError.value = null
     organizeSummary.value = null
+    organizeModelLabel.value = null
     undoStack.value.push(cloneNoteFormValues(previousSnapshot.value))
 
     if (undoStack.value.length > MAX_UNDO_STEPS) {
@@ -923,10 +1170,29 @@ const nowAsIso = (): string => new Date().toISOString()
       />
 
       <button
+        class="app-button app-button--secondary category-notes-page__analysis-button"
+        type="button"
+        :disabled="
+          isImporting || isSaving || isOrganizing || isAnalyzingNote || !hasScreenshotBlocks
+        "
+        @click="void analyzeNotebook()"
+      >
+        {{
+          isAnalyzingNote
+            ? 'Анализируем заметку...'
+            : 'Анализировать заметку нейросетью'
+        }}
+      </button>
+
+      <button
         class="app-button app-button--secondary category-notes-page__organize-button"
         type="button"
         :disabled="
-          isImporting || isSaving || isOrganizing || !hasMeaningfulNotebookContent
+          isImporting ||
+          isSaving ||
+          isOrganizing ||
+          isAnalyzingNote ||
+          !hasMeaningfulNotebookContent
         "
         @click="void organizeNotebook()"
       >
@@ -938,7 +1204,7 @@ const nowAsIso = (): string => new Date().toISOString()
       <button
         class="app-button app-button--secondary category-notes-page__import-button"
         type="button"
-        :disabled="isImporting || isSaving || isOrganizing"
+        :disabled="isImporting || isSaving || isOrganizing || isAnalyzingNote"
         @click="void openImportFolderPicker()"
       >
         {{ isImporting ? 'Импортируем...' : 'Импорт из Apple Notes' }}
@@ -955,6 +1221,34 @@ const nowAsIso = (): string => new Date().toISOString()
       />
 
       <AppNotice
+        v-if="noteAnalysisError"
+        tone="error"
+        title="AI-анализ заметки не завершился"
+        :message="noteAnalysisError"
+      >
+        <p
+          v-if="noteAnalysisModelLabel"
+          class="category-notes-page__ai-model"
+        >
+          Нейросеть: {{ noteAnalysisModelLabel }}
+        </p>
+      </AppNotice>
+
+      <AppNotice
+        v-if="noteAnalysisSummary"
+        tone="success"
+        title="AI-анализ заметки завершён"
+        :message="noteAnalysisSummary"
+      >
+        <p
+          v-if="noteAnalysisModelLabel"
+          class="category-notes-page__ai-model"
+        >
+          Нейросеть: {{ noteAnalysisModelLabel }}
+        </p>
+      </AppNotice>
+
+      <AppNotice
         v-if="organizeError"
         tone="error"
         title="AI-сортировка не завершилась"
@@ -966,7 +1260,14 @@ const nowAsIso = (): string => new Date().toISOString()
         tone="success"
         title="Конспект упорядочен"
         :message="organizeSummary"
-      />
+      >
+        <p
+          v-if="organizeModelLabel"
+          class="category-notes-page__ai-model"
+        >
+          Нейросеть: {{ organizeModelLabel }}
+        </p>
+      </AppNotice>
 
       <AppNotice
         v-if="attachmentsLoadError"
@@ -982,6 +1283,28 @@ const nowAsIso = (): string => new Date().toISOString()
         message="Подтягиваем текущие статусы анализа по вложениям темы."
         compact
       />
+
+      <AppNotice
+        v-if="pendingAttachments.length"
+        tone="info"
+        title="Скриншоты темы ещё не проанализированы"
+        :message="pendingAnalysisMessage"
+      >
+        <template #actions>
+          <button
+            class="app-button app-button--secondary"
+            type="button"
+            :disabled="isSaving || isImporting || isOrganizing || isAnalyzingNote"
+            @click="void analyzeNotebook()"
+          >
+            {{
+              isAnalyzingNote
+                ? 'Анализируем заметку...'
+                : 'Запустить AI-анализ'
+            }}
+          </button>
+        </template>
+      </AppNotice>
 
       <AppNotice
         v-if="attachmentsInAnalysis.length"
@@ -1073,6 +1396,7 @@ const nowAsIso = (): string => new Date().toISOString()
 </template>
 
 <style scoped>
+.category-notes-page__analysis-button,
 .category-notes-page__organize-button,
 .category-notes-page__import-button {
   align-self: flex-start;
@@ -1115,5 +1439,12 @@ const nowAsIso = (): string => new Date().toISOString()
 
 .category-notes-page__failure-item {
   line-height: 1.38;
+}
+
+.category-notes-page__ai-model {
+  margin: 0.15rem 0 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
 }
 </style>
