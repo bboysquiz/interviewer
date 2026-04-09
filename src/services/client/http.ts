@@ -30,11 +30,8 @@ export const requestJson = async <T>(
       headers,
     })
   } catch (error) {
-    if (
-      error instanceof DOMException &&
-      error.name === 'AbortError'
-    ) {
-      throw new Error('Запрос был прерван. Попробуй еще раз.')
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Запрос был прерван. Попробуй ещё раз.')
     }
 
     throw new Error(
@@ -50,15 +47,33 @@ export const requestJson = async <T>(
       responseText = await response.text()
 
       if (responseText) {
-        const payload = JSON.parse(responseText) as { message?: string }
-        if (payload.message) {
-          errorMessage = payload.message
+        const trimmedResponse = responseText.trim()
+
+        if (
+          /^<!doctype html/i.test(trimmedResponse) ||
+          /^<html/i.test(trimmedResponse)
+        ) {
+          if (response.status >= 500) {
+            errorMessage =
+              'Сервер временно не смог обработать запрос. Попробуй ещё раз чуть позже.'
+          } else {
+            errorMessage = 'Сервер вернул неожиданный HTML-ответ вместо JSON.'
+          }
+        } else {
+          const payload = JSON.parse(responseText) as { message?: string }
+
+          if (payload.message) {
+            errorMessage = payload.message
+          }
         }
       }
     } catch {
       if (response.status === 503) {
         errorMessage =
           'AI-сервис временно недоступен. Попробуй ещё раз через минуту.'
+      } else if (response.status === 502 || response.status === 504) {
+        errorMessage =
+          'AI-сервис не успел корректно ответить через прокси. Попробуй ещё раз чуть позже.'
       } else if (responseText.trim()) {
         errorMessage = responseText.trim()
       }

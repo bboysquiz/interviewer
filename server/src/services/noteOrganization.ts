@@ -50,6 +50,14 @@ const COMPACT_ORGANIZATION_BUDGET: OrganizationBudgetProfile = {
   maxImageDescriptionChars: 40,
 }
 
+const ULTRA_COMPACT_ORGANIZATION_BUDGET: OrganizationBudgetProfile = {
+  totalChars: 1900,
+  minBlockChars: 20,
+  maxTextBlockChars: 64,
+  maxImageTextChars: 36,
+  maxImageDescriptionChars: 28,
+}
+
 export interface OrganizeExistingNoteResult
   extends OrganizeKnowledgeBaseNoteResult {
   contentBlocks: NoteContentBlock[]
@@ -175,6 +183,11 @@ const shouldRetryWithCompactInput = (error: unknown): boolean => {
     'too many states',
     'constraint has too many states',
     'schema produces a constraint',
+    'empty structured response',
+    'bad gateway',
+    'temporarily unavailable',
+    'service unavailable',
+    'failed to validate json',
   ].some((pattern) => normalizedMessage.includes(pattern))
 }
 
@@ -248,24 +261,35 @@ export const reorganizeNoteContent = async (
     })
   }
 
-  let organization: OrganizeKnowledgeBaseNoteResult
+  const budgets: OrganizationBudgetProfile[] = [
+    DEFAULT_ORGANIZATION_BUDGET,
+    COMPACT_ORGANIZATION_BUDGET,
+    ULTRA_COMPACT_ORGANIZATION_BUDGET,
+  ]
+  let organization: OrganizeKnowledgeBaseNoteResult | null = null
+  let lastError: unknown = null
 
-  try {
-    organization = await organizeKnowledgeBaseNote(
-      buildOrganizationInput(input, sourceBlocks),
-    )
-  } catch (error) {
-    if (!shouldRetryWithCompactInput(error)) {
-      throw error
+  for (let index = 0; index < budgets.length; index += 1) {
+    try {
+      organization = await organizeKnowledgeBaseNote(
+        buildOrganizationInput(input, sourceBlocks, budgets[index]!),
+      )
+      break
+    } catch (error) {
+      lastError = error
+
+      if (!shouldRetryWithCompactInput(error) || index === budgets.length - 1) {
+        throw error
+      }
     }
+  }
 
-    organization = await organizeKnowledgeBaseNote(
-      buildOrganizationInput(
-        input,
-        sourceBlocks,
-        COMPACT_ORGANIZATION_BUDGET,
-      ),
-    )
+  if (!organization) {
+    throw (lastError ??
+      new AiServiceError('AI note organization failed.', {
+        status: 502,
+        code: 'ai_upstream_error',
+      }))
   }
 
   const organized = buildOrganizedContentBlocks(sourceBlocks, organization)

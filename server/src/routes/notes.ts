@@ -470,7 +470,14 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       })
     } catch (error) {
       if (error instanceof AiServiceError) {
-        response.status(error.status).json({
+        const safeStatus =
+          error.status >= 500
+            ? error.code === 'ai_invalid_response'
+              ? 422
+              : 424
+            : error.status
+
+        response.status(safeStatus).json({
           message: error.message,
           code: error.code,
           ...(error.details !== undefined ? { details: error.details } : {}),
