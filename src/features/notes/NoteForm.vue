@@ -12,6 +12,7 @@ import {
   type NoteFormValues,
 } from '@/features/notes/noteForm'
 import { buildApiUrl } from '@/services/client/http'
+import ConfirmSheet from '@/shared/ui/ConfirmSheet.vue'
 import type { Attachment } from '@/types'
 
 interface EditorSelectionSnapshot {
@@ -40,6 +41,8 @@ const props = withDefaults(
     showUndo?: boolean
     canUndo?: boolean
     undoLabel?: string
+    showClear?: boolean
+    clearLabel?: string
   }>(),
   {
     isSubmitting: false,
@@ -57,7 +60,9 @@ const props = withDefaults(
     statusTone: 'saved',
     showUndo: false,
     canUndo: false,
+    showClear: false,
     undoLabel: 'Отменить',
+    clearLabel: 'Очистить всё',
   },
 )
 
@@ -73,10 +78,11 @@ const textEditors = new Map<string, HTMLTextAreaElement>()
 const lastSelection = ref<EditorSelectionSnapshot | null>(null)
 const selectedImageBlockId = ref<string | null>(null)
 const isCanvasSelectAllActive = ref(false)
+const isClearConfirmOpen = ref(false)
 
 const hasBlocks = computed(() => form.value.blocks.length > 0)
 const showCanvasToolbar = computed(
-  () => Boolean(props.statusLabel) || props.showUndo,
+  () => Boolean(props.statusLabel) || props.showUndo || props.showClear,
 )
 const showFooterActions = computed(() => props.showSubmit || props.showCancel)
 
@@ -229,6 +235,23 @@ const clearCanvasContent = async (): Promise<void> => {
   await focusTextBlock(emptyBlock.id, 0)
 }
 
+const requestClearCanvas = (): void => {
+  if (props.isSubmitting) {
+    return
+  }
+
+  isClearConfirmOpen.value = true
+}
+
+const closeClearCanvasConfirm = (): void => {
+  isClearConfirmOpen.value = false
+}
+
+const confirmClearCanvas = async (): Promise<void> => {
+  isClearConfirmOpen.value = false
+  await clearCanvasContent()
+}
+
 const handleCanvasKeydown = async (event: KeyboardEvent): Promise<void> => {
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'a') {
     event.preventDefault()
@@ -272,6 +295,15 @@ const openImageBlockViewer = (block: NoteFormImageBlock): void => {
     alt: imageLabel,
     title: imageLabel,
   })
+}
+
+const handleImageClick = (block: NoteFormImageBlock): void => {
+  if (selectedImageBlockId.value === block.id) {
+    openImageBlockViewer(block)
+    return
+  }
+
+  selectImageBlock(block.id)
 }
 
 const insertImagesAtSelection = (
@@ -634,6 +666,7 @@ onBeforeUnmount(() => {
         class="note-form__canvas"
         :class="{
           'note-form__canvas--immersive': immersive,
+          'note-form__canvas--select-all': isCanvasSelectAllActive,
         }"
         @keydown.capture="void handleCanvasKeydown($event)"
         @pointerdown.capture="resetCanvasSelectAll()"
@@ -656,6 +689,16 @@ onBeforeUnmount(() => {
           >
             {{ undoLabel }}
           </button>
+
+          <button
+            v-if="showClear"
+            class="app-button app-button--secondary note-form__clear-button"
+            type="button"
+            :disabled="isSubmitting"
+            @click="requestClearCanvas()"
+          >
+            {{ clearLabel }}
+          </button>
         </div>
 
         <article
@@ -664,6 +707,7 @@ onBeforeUnmount(() => {
           class="note-form__segment"
           :class="{
             'note-form__segment--image': block.type === 'image',
+            'note-form__segment--selected-all': isCanvasSelectAllActive,
           }"
         >
           <textarea
@@ -673,6 +717,9 @@ onBeforeUnmount(() => {
               (element) => registerTextEditor(block.id, element as Element | null)
             "
             class="note-form__editor"
+            :class="{
+              'note-form__editor--selected-all': isCanvasSelectAllActive,
+            }"
             rows="1"
             placeholder="Пиши здесь заметку. Скриншот можно вставить через Ctrl+V."
             @focus="rememberSelection(block.id, $event)"
@@ -689,11 +736,13 @@ onBeforeUnmount(() => {
             class="note-form__image-card"
             :class="{
               'note-form__image-card--selected': selectedImageBlockId === block.id,
+              'note-form__image-card--selected-all': isCanvasSelectAllActive,
             }"
             type="button"
             :disabled="isSubmitting"
             @focus="selectImageBlock(block.id)"
-            @click="openImageBlockViewer(block)"
+            @click="handleImageClick(block)"
+            @dblclick="openImageBlockViewer(block)"
             @keydown="void handleImageKeydown($event, index, block)"
           >
             <div
@@ -752,6 +801,17 @@ onBeforeUnmount(() => {
         {{ cancelLabel }}
       </button>
     </div>
+
+    <ConfirmSheet
+      :open="isClearConfirmOpen"
+      title="Очистить заметку?"
+      description="Вы уверены, что хотите очистить текст и скриншоты в полотне заметки?"
+      confirm-label="Да"
+      cancel-label="Нет"
+      tone="danger"
+      @cancel="closeClearCanvasConfirm"
+      @confirm="void confirmClearCanvas()"
+    />
   </form>
 </template>
 
@@ -859,12 +919,24 @@ onBeforeUnmount(() => {
   min-height: 26rem;
 }
 
+.note-form__canvas--select-all {
+  border-color: rgba(31, 109, 90, 0.28);
+  box-shadow:
+    inset 0 0 0 1px rgba(31, 109, 90, 0.12),
+    0 18px 30px rgba(71, 50, 24, 0.06);
+}
+
 .note-form__segment {
   display: block;
+  border-radius: 18px;
 }
 
 .note-form__segment--image {
   padding-block: 0.18rem;
+}
+
+.note-form__segment--selected-all {
+  background: rgba(31, 109, 90, 0.06);
 }
 
 .note-form__editor {
@@ -883,6 +955,11 @@ onBeforeUnmount(() => {
 
 .note-form__editor:focus {
   outline: none;
+}
+
+.note-form__editor--selected-all {
+  border-radius: 14px;
+  background: rgba(31, 109, 90, 0.08);
 }
 
 .note-form__image-card {
@@ -905,6 +982,12 @@ onBeforeUnmount(() => {
   border-color: rgba(31, 109, 90, 0.26);
   box-shadow: 0 0 0 3px rgba(31, 109, 90, 0.1);
   background: rgba(255, 255, 255, 0.38);
+}
+
+.note-form__image-card--selected-all {
+  border-color: rgba(31, 109, 90, 0.24);
+  box-shadow: 0 0 0 3px rgba(31, 109, 90, 0.08);
+  background: rgba(255, 255, 255, 0.44);
 }
 
 .note-form__image-wrap,
@@ -934,6 +1017,11 @@ onBeforeUnmount(() => {
 }
 
 .note-form__undo-button {
+  min-height: 2.5rem;
+  padding-inline: 0.78rem;
+}
+
+.note-form__clear-button {
   min-height: 2.5rem;
   padding-inline: 0.78rem;
 }

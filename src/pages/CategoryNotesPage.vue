@@ -1239,6 +1239,7 @@ onBeforeUnmount(() => {
         :status-label="saveStatusLabel"
         :status-tone="saveStatusTone"
         show-undo
+        show-clear
         :can-undo="canUndo"
         @undo="undoLastChange"
       />
