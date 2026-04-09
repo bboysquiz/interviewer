@@ -29,8 +29,127 @@ const providers: Record<AiProviderName, AiProvider> = {
   groq: groqProvider,
 }
 
+const providerCooldowns = new Map<string, number>()
+
+const DEFAULT_TEMPORARY_PROVIDER_COOLDOWN_MS = 30_000
+const DEFAULT_QUOTA_PROVIDER_COOLDOWN_MS = 60_000
+
 const uniqueProviders = (value: AiProviderName[]): AiProviderName[] =>
   [...new Set(value)]
+
+const buildCooldownKey = (task: AiTask, providerName: AiProviderName): string =>
+  `${task}:${providerName}`
+
+const getProviderCooldownUntil = (
+  task: AiTask,
+  providerName: AiProviderName,
+): number | null => {
+  const key = buildCooldownKey(task, providerName)
+  const cooldownUntil = providerCooldowns.get(key) ?? null
+
+  if (cooldownUntil === null) {
+    return null
+  }
+
+  if (cooldownUntil <= Date.now()) {
+    providerCooldowns.delete(key)
+    return null
+  }
+
+  return cooldownUntil
+}
+
+const extractRetryDelayMsFromDetails = (details: unknown): number | null => {
+  if (!details || typeof details !== 'object') {
+    return null
+  }
+
+  const providerDetails = (details as { providerDetails?: unknown }).providerDetails
+
+  if (!Array.isArray(providerDetails)) {
+    return null
+  }
+
+  for (const item of providerDetails) {
+    if (!item || typeof item !== 'object') {
+      continue
+    }
+
+    const retryDelay = (item as { retryDelay?: unknown }).retryDelay
+
+    if (typeof retryDelay !== 'string') {
+      continue
+    }
+
+    const match = retryDelay.match(/(\d+(?:\.\d+)?)s/i)
+
+    if (!match) {
+      continue
+    }
+
+    const seconds = Number.parseFloat(match[1])
+
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.ceil(seconds * 1000)
+    }
+  }
+
+  return null
+}
+
+const extractRetryDelayMs = (error: AiServiceError): number | null => {
+  const fromDetails = extractRetryDelayMsFromDetails(error.details)
+
+  if (fromDetails !== null) {
+    return fromDetails
+  }
+
+  const retryDelayMatch = error.message.match(/retry in (\d+(?:\.\d+)?)s/i)
+
+  if (!retryDelayMatch) {
+    return null
+  }
+
+  const seconds = Number.parseFloat(retryDelayMatch[1])
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null
+  }
+
+  return Math.ceil(seconds * 1000)
+}
+
+const getProviderCooldownDurationMs = (error: AiServiceError): number | null => {
+  const retryDelayMs = extractRetryDelayMs(error)
+
+  if (retryDelayMs !== null) {
+    return retryDelayMs
+  }
+
+  if (isQuotaLimitedAiError(error) || error.status === 429) {
+    return DEFAULT_QUOTA_PROVIDER_COOLDOWN_MS
+  }
+
+  if (isTemporaryUpstreamAiError(error)) {
+    return DEFAULT_TEMPORARY_PROVIDER_COOLDOWN_MS
+  }
+
+  return null
+}
+
+const markProviderCooldown = (
+  task: AiTask,
+  providerName: AiProviderName,
+  error: AiServiceError,
+): void => {
+  const durationMs = getProviderCooldownDurationMs(error)
+
+  if (durationMs === null || durationMs <= 0) {
+    return
+  }
+
+  providerCooldowns.set(buildCooldownKey(task, providerName), Date.now() + durationMs)
+}
 
 const isQuotaLimitedAiError = (error: AiServiceError): boolean => {
   const normalizedMessage = error.message.toLowerCase()
@@ -125,6 +244,14 @@ const getProvidersForTask = (task: AiTask): AiProvider[] => {
     .filter((provider) => provider.isConfigured)
     .filter((provider) => task !== 'image_analysis' || provider.supportsImageAnalysis)
 
+  const readyProviders = eligibleProviders.filter(
+    (provider) => getProviderCooldownUntil(task, provider.name) === null,
+  )
+
+  if (readyProviders.length > 0) {
+    return readyProviders
+  }
+
   if (eligibleProviders.length > 0) {
     return eligibleProviders
   }
@@ -167,6 +294,10 @@ const withProviderFallback = async <T>(
 
       if (!hasNextProvider || !isRetryableAiError(error)) {
         throw error
+      }
+
+      if (error instanceof AiServiceError) {
+        markProviderCooldown(task, provider.name, error)
       }
 
       console.warn(

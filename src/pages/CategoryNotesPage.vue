@@ -798,7 +798,15 @@ const analyzeAttachmentSet = async (
     const skippedCount = responses.filter(
       (response) => response.analysis.status === 'skipped',
     ).length
-    const failedCount = Math.max(attachmentIds.length - responses.length, 0)
+    const refreshedAttachments = attachmentIds
+      .map((attachmentId) => attachmentsById.value[attachmentId] ?? null)
+      .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null)
+    const processingCount = refreshedAttachments.filter(
+      (attachment) => attachment.processingStatus === 'processing',
+    ).length
+    const failedCount = refreshedAttachments.filter(
+      (attachment) => attachment.processingStatus === 'failed',
+    ).length
 
     noteAnalysisModelLabel.value = formatAiModelLabels(
       attachmentIds.map(
@@ -806,7 +814,7 @@ const analyzeAttachmentSet = async (
       ),
     )
 
-    if (completedCount === 0 && skippedCount === 0) {
+    if (completedCount === 0 && skippedCount === 0 && processingCount === 0) {
       noteAnalysisError.value = options.allFailedMessage
       return
     }
@@ -828,6 +836,12 @@ const analyzeAttachmentSet = async (
     if (failedCount > 0) {
       summaryParts.push(
         `ещё ${failedCount} ${pluralizeScreenshots(failedCount)} требуют повторной попытки`,
+      )
+    }
+
+    if (processingCount > 0) {
+      summaryParts.push(
+        `Ещё ${processingCount} ${pluralizeScreenshots(processingCount)} всё ещё анализируются`,
       )
     }
 

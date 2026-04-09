@@ -108,6 +108,7 @@ export const useAttachmentsStore = defineStore('attachments', () => {
 
     analysisLoadingState.value[attachmentId] = true
     analysisErrors.value[attachmentId] = null
+    const currentAttachment = attachmentsById.value[attachmentId] ?? null
 
     try {
       const response = await knowledgeBaseApi.analyzeAttachment(
@@ -125,6 +126,14 @@ export const useAttachmentsStore = defineStore('attachments', () => {
         error instanceof Error
           ? error.message
           : 'Не удалось запустить AI-анализ изображения.'
+      if (currentAttachment?.noteId) {
+        try {
+          await loadAttachmentsByNote(currentAttachment.noteId, { force: true })
+        } catch {
+          // Ignore refresh errors and keep the original analysis error for the caller.
+        }
+      }
+
       throw error
     } finally {
       analysisLoadingState.value[attachmentId] = false
