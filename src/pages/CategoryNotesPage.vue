@@ -672,7 +672,6 @@ const saveNotebook = async (): Promise<void> => {
     }
 
     maybeCommitImportSummary()
-    await saveNotebook()
   } catch (error) {
     saveError.value =
       error instanceof Error ? error.message : 'Не удалось сохранить тему.'
@@ -954,6 +953,18 @@ const importAppleNotesFiles = async (files: File[]): Promise<void> => {
       drafts.length === 1
         ? 'Импортирована 1 заметка из Apple Notes в общий конспект темы.'
         : `Импортировано ${drafts.length} заметок из Apple Notes в общий конспект темы.`
+
+    await saveNotebook()
+
+    if (!saveError.value && notebookNote.value) {
+      const persistedNote = await notesStore.loadNote(notebookNote.value.id, {
+        force: true,
+      })
+      await attachmentsStore.loadAttachmentsByNote(persistedNote.id, {
+        force: true,
+      })
+      hydrateFormFromNotebook(persistedNote)
+    }
   } catch (error) {
     importError.value =
       error instanceof Error
