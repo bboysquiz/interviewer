@@ -476,6 +476,8 @@ const buildEmptyNotebookForm = (): NoteFormValues => ({
 const buildNotebookSyncKey = (note: Note | null): string | null =>
   note ? `${note.id}:${note.updatedAt}` : null
 
+const nowAsIso = (): string => new Date().toISOString()
+
 const stopAutosave = (): void => {
   if (autosaveHandle) {
     clearTimeout(autosaveHandle)
@@ -1207,8 +1209,6 @@ onBeforeUnmount(() => {
   clearContextualFooter()
   revokeFormPreviewUrls(notebookForm.value)
 })
-
-const nowAsIso = (): string => new Date().toISOString()
 </script>
 
 <template>
