@@ -132,6 +132,24 @@ const extractMessageText = (content: unknown): string => {
     .trim()
 }
 
+const shouldRetryWithoutStructuredJson = (error: unknown): boolean => {
+  if (!(error instanceof AiServiceError)) {
+    return false
+  }
+
+  if (error.status !== 400 || error.code !== 'ai_validation_error') {
+    return false
+  }
+
+  const normalizedMessage = error.message.toLowerCase()
+
+  return (
+    normalizedMessage.includes('failed to validate json') ||
+    normalizedMessage.includes('failed_generation') ||
+    normalizedMessage.includes('json')
+  )
+}
+
 const analyzeImageForKnowledgeBase = async (
   input: AnalyzeImageForKnowledgeBaseInput,
 ): Promise<AnalyzeImageForKnowledgeBaseResult> => {
@@ -338,26 +356,54 @@ const organizeKnowledgeBaseNote = async (
 
   try {
     const client = getGroqClient()
-    const completion = await client.chat.completions.create({
-      model: GROQ_INTERVIEW_QUESTION_MODEL,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            buildNoteOrganizationSystemPrompt(),
-            'Return only one JSON object with key sections. Each section must include title and block_indexes.',
-          ].join('\n\n'),
-        },
-        {
-          role: 'user',
-          content: buildNoteOrganizationUserPrompt(input),
-        },
-      ],
-      response_format: {
-        type: 'json_object',
+    const messages = [
+      {
+        role: 'system' as const,
+        content: [
+          buildNoteOrganizationSystemPrompt(),
+          'Return only one JSON object with key sections. Each section must include title and block_indexes.',
+        ].join('\n\n'),
       },
-      max_completion_tokens: 2200,
-    })
+      {
+        role: 'user' as const,
+        content: buildNoteOrganizationUserPrompt(input),
+      },
+    ]
+
+    let completion: Awaited<ReturnType<typeof client.chat.completions.create>>
+
+    try {
+      completion = await client.chat.completions.create({
+        model: GROQ_INTERVIEW_QUESTION_MODEL,
+        messages,
+        response_format: {
+          type: 'json_object',
+        },
+        max_completion_tokens: 2200,
+      })
+    } catch (error) {
+      const aiError = toGroqAiServiceError(error, 'Groq note organization failed.')
+
+      if (!shouldRetryWithoutStructuredJson(aiError)) {
+        throw aiError
+      }
+
+      completion = await client.chat.completions.create({
+        model: GROQ_INTERVIEW_QUESTION_MODEL,
+        messages: [
+          messages[0],
+          {
+            role: 'user',
+            content: [
+              buildNoteOrganizationUserPrompt(input),
+              'Important: do not add explanations before or after the JSON object.',
+              'Return a plain text response that contains only one valid JSON object.',
+            ].join('\n\n'),
+          },
+        ],
+        max_completion_tokens: 2200,
+      })
+    }
 
     const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
 
