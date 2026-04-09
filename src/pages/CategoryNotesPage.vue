@@ -342,6 +342,39 @@ const hasScreenshotBlocks = computed(() =>
   notebookForm.value.blocks.some((block) => block.type === 'image'),
 )
 
+const screenshotBlocksWithoutAnalysis = computed(() =>
+  notebookForm.value.blocks.filter((block): block is NoteFormImageBlock => {
+    if (block.type !== 'image') {
+      return false
+    }
+
+    if (!block.attachmentId) {
+      return true
+    }
+
+    const attachment = attachmentsById.value[block.attachmentId]
+    return !attachment || attachment.processingStatus !== 'ready'
+  }),
+)
+
+const hasScreenshotBlocksWithoutAnalysis = computed(
+  () => screenshotBlocksWithoutAnalysis.value.length > 0,
+)
+
+const organizeBlockedReason = computed(() => {
+  if (!hasScreenshotBlocksWithoutAnalysis.value) {
+    return null
+  }
+
+  const count = screenshotBlocksWithoutAnalysis.value.length
+
+  if (count === 1) {
+    return 'Сначала проанализируй 1 скриншот темы. Пока он не готов, AI-сортировка заблокирована.'
+  }
+
+  return `Сначала проанализируй все скриншоты темы. Сейчас без AI-анализа ещё ${count} ${pluralizeScreenshots(count)}.`
+})
+
 const formFingerprint = computed(() => createNoteFormFingerprint(notebookForm.value))
 const isDirty = computed(() => formFingerprint.value !== lastSavedFingerprint.value)
 const canUndo = computed(() => undoStack.value.length > 0 && !isSaving.value)
@@ -807,6 +840,13 @@ const analyzeNotebook = async (): Promise<void> => {
     return
   }
 
+  if (hasScreenshotBlocksWithoutAnalysis.value) {
+    organizeError.value =
+      organizeBlockedReason.value ??
+      'Сначала проанализируй все скриншоты темы нейросетью.'
+    return
+  }
+
   if (isDirty.value || !notebookNote.value) {
     await saveNotebook()
 
@@ -1196,6 +1236,13 @@ const nowAsIso = (): string => new Date().toISOString()
         }}
       </button>
 
+      <p
+        v-if="organizeBlockedReason"
+        class="category-notes-page__organize-hint"
+      >
+        {{ organizeBlockedReason }}
+      </p>
+
       <button
         class="app-button app-button--secondary category-notes-page__organize-button"
         type="button"
@@ -1204,7 +1251,8 @@ const nowAsIso = (): string => new Date().toISOString()
           isSaving ||
           isOrganizing ||
           isAnalyzingNote ||
-          !hasMeaningfulNotebookContent
+          !hasMeaningfulNotebookContent ||
+          hasScreenshotBlocksWithoutAnalysis
         "
         @click="void organizeNotebook()"
       >
@@ -1412,6 +1460,14 @@ const nowAsIso = (): string => new Date().toISOString()
 .category-notes-page__organize-button,
 .category-notes-page__import-button {
   align-self: flex-start;
+}
+
+.category-notes-page__organize-hint {
+  margin: -0.35rem 0 0;
+  max-width: 32rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .category-notes-page__import-input {

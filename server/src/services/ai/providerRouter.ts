@@ -50,7 +50,33 @@ const isLanguageComplianceAiError = (error: AiServiceError): boolean =>
 const isRepeatedQuestionAiError = (error: AiServiceError): boolean =>
   error.message.toLowerCase().includes('repeated interview question')
 
+const isTemporaryUpstreamAiError = (error: AiServiceError): boolean => {
+  const normalizedMessage = error.message.toLowerCase()
+
+  return (
+    (error.code === 'ai_upstream_error' &&
+      error.status >= 500 &&
+      error.status < 600) ||
+    [
+      'timed out',
+      'timeout',
+      'service unavailable',
+      'temporarily unavailable',
+      'overloaded',
+      'internal error',
+    ].some((pattern) => normalizedMessage.includes(pattern))
+  )
+}
+
 const isRetryableAiError = (error: unknown): boolean => {
+  if (error instanceof Error && !(error instanceof AiServiceError)) {
+    const normalizedMessage = error.message.toLowerCase()
+
+    return ['timed out', 'timeout', 'socket hang up', 'econnreset'].some(
+      (pattern) => normalizedMessage.includes(pattern),
+    )
+  }
+
   if (!(error instanceof AiServiceError)) {
     return false
   }
@@ -61,6 +87,7 @@ const isRetryableAiError = (error: unknown): boolean => {
 
   return (
     isQuotaLimitedAiError(error) ||
+    isTemporaryUpstreamAiError(error) ||
     isLanguageComplianceAiError(error) ||
     isRepeatedQuestionAiError(error)
   )

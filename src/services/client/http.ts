@@ -44,14 +44,24 @@ export const requestJson = async <T>(
 
   if (!response.ok) {
     let errorMessage = `Request failed with status ${response.status}`
+    let responseText = ''
 
     try {
-      const payload = (await response.json()) as { message?: string }
-      if (payload.message) {
-        errorMessage = payload.message
+      responseText = await response.text()
+
+      if (responseText) {
+        const payload = JSON.parse(responseText) as { message?: string }
+        if (payload.message) {
+          errorMessage = payload.message
+        }
       }
     } catch {
-      // Keep the default fallback message if the response is not JSON.
+      if (response.status === 503) {
+        errorMessage =
+          'AI-сервис временно недоступен. Попробуй ещё раз через минуту.'
+      } else if (responseText.trim()) {
+        errorMessage = responseText.trim()
+      }
     }
 
     throw new Error(errorMessage)

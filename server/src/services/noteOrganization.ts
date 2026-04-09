@@ -26,11 +26,29 @@ interface OrganizeExistingNoteInput {
   attachmentsById: Record<string, NoteOrganizationAttachmentContext>
 }
 
-const MAX_ORGANIZATION_TOTAL_CHARS = 5200
-const MIN_BLOCK_SNIPPET_CHARS = 48
-const MAX_TEXT_BLOCK_CHARS = 160
-const MAX_IMAGE_TEXT_CHARS = 96
-const MAX_IMAGE_DESCRIPTION_CHARS = 72
+interface OrganizationBudgetProfile {
+  totalChars: number
+  minBlockChars: number
+  maxTextBlockChars: number
+  maxImageTextChars: number
+  maxImageDescriptionChars: number
+}
+
+const DEFAULT_ORGANIZATION_BUDGET: OrganizationBudgetProfile = {
+  totalChars: 5200,
+  minBlockChars: 48,
+  maxTextBlockChars: 160,
+  maxImageTextChars: 96,
+  maxImageDescriptionChars: 72,
+}
+
+const COMPACT_ORGANIZATION_BUDGET: OrganizationBudgetProfile = {
+  totalChars: 3200,
+  minBlockChars: 28,
+  maxTextBlockChars: 96,
+  maxImageTextChars: 56,
+  maxImageDescriptionChars: 40,
+}
 
 export interface OrganizeExistingNoteResult
   extends OrganizeKnowledgeBaseNoteResult {
@@ -51,10 +69,13 @@ const truncateText = (value: string, maxChars: number): string => {
   return `${value.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`
 }
 
-const estimatePerBlockBudget = (blockCount: number): number =>
+const estimatePerBlockBudget = (
+  blockCount: number,
+  budget: OrganizationBudgetProfile,
+): number =>
   Math.max(
-    MIN_BLOCK_SNIPPET_CHARS,
-    Math.floor(MAX_ORGANIZATION_TOTAL_CHARS / Math.max(blockCount, 1)),
+    budget.minBlockChars,
+    Math.floor(budget.totalChars / Math.max(blockCount, 1)),
   )
 
 const normalizeSectionTitle = (value: string): string => {
@@ -84,8 +105,9 @@ const stripGeneratedSectionHeadingBlocks = (
 const buildOrganizationInput = (
   input: OrganizeExistingNoteInput,
   blocks: NoteContentBlock[],
+  budget: OrganizationBudgetProfile = DEFAULT_ORGANIZATION_BUDGET,
 ): OrganizeKnowledgeBaseNoteInput => {
-  const perBlockBudget = estimatePerBlockBudget(blocks.length)
+  const perBlockBudget = estimatePerBlockBudget(blocks.length, budget)
 
   return {
     categoryName: input.categoryName ?? null,
@@ -99,7 +121,7 @@ const buildOrganizationInput = (
           type: 'text',
           text: truncateText(
             normalizedText,
-            Math.min(MAX_TEXT_BLOCK_CHARS, perBlockBudget * 2),
+            Math.min(budget.maxTextBlockChars, perBlockBudget * 2),
           ),
         }
       }
@@ -117,21 +139,43 @@ const buildOrganizationInput = (
         extractedText: normalizedExtractedText
           ? truncateText(
               normalizedExtractedText,
-              Math.min(MAX_IMAGE_TEXT_CHARS, perBlockBudget),
+              Math.min(budget.maxImageTextChars, perBlockBudget),
             )
           : null,
         imageDescription: normalizedDescription
           ? truncateText(
               normalizedDescription,
               Math.min(
-                MAX_IMAGE_DESCRIPTION_CHARS,
-                Math.max(MIN_BLOCK_SNIPPET_CHARS, Math.floor(perBlockBudget * 0.75)),
+                budget.maxImageDescriptionChars,
+                Math.max(budget.minBlockChars, Math.floor(perBlockBudget * 0.75)),
               ),
             )
           : null,
       }
     }),
   }
+}
+
+const shouldRetryWithCompactInput = (error: unknown): boolean => {
+  if (!(error instanceof AiServiceError)) {
+    return false
+  }
+
+  if (error.status === 413) {
+    return true
+  }
+
+  const normalizedMessage = error.message.toLowerCase()
+
+  return [
+    'request too large',
+    'context length',
+    'tokens per minute',
+    'tpm',
+    'too many states',
+    'constraint has too many states',
+    'schema produces a constraint',
+  ].some((pattern) => normalizedMessage.includes(pattern))
 }
 
 const buildOrganizedContentBlocks = (
@@ -204,9 +248,26 @@ export const reorganizeNoteContent = async (
     })
   }
 
-  const organization = await organizeKnowledgeBaseNote(
-    buildOrganizationInput(input, sourceBlocks),
-  )
+  let organization: OrganizeKnowledgeBaseNoteResult
+
+  try {
+    organization = await organizeKnowledgeBaseNote(
+      buildOrganizationInput(input, sourceBlocks),
+    )
+  } catch (error) {
+    if (!shouldRetryWithCompactInput(error)) {
+      throw error
+    }
+
+    organization = await organizeKnowledgeBaseNote(
+      buildOrganizationInput(
+        input,
+        sourceBlocks,
+        COMPACT_ORGANIZATION_BUDGET,
+      ),
+    )
+  }
+
   const organized = buildOrganizedContentBlocks(sourceBlocks, organization)
 
   return {
