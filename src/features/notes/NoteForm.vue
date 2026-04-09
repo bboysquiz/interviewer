@@ -72,6 +72,7 @@ const pickerError = ref<string | null>(null)
 const textEditors = new Map<string, HTMLTextAreaElement>()
 const lastSelection = ref<EditorSelectionSnapshot | null>(null)
 const selectedImageBlockId = ref<string | null>(null)
+const isCanvasSelectAllActive = ref(false)
 
 const hasBlocks = computed(() => form.value.blocks.length > 0)
 const showCanvasToolbar = computed(
@@ -89,6 +90,10 @@ const attachmentPreviewUrl = (block: NoteFormImageBlock): string | null => {
 
   const attachment = attachmentForBlock(block)
   return attachment ? buildApiUrl(attachment.storagePath) : null
+}
+
+const resetCanvasSelectAll = (): void => {
+  isCanvasSelectAllActive.value = false
 }
 
 const createSelectionSnapshot = (
@@ -177,6 +182,7 @@ const focusTextBlock = async (
 
   syncTextEditorHeight(editor)
   editor.focus()
+  resetCanvasSelectAll()
 
   const nextCaret = Math.max(0, Math.min(caretPosition, editor.value.length))
   editor.setSelectionRange(nextCaret, nextCaret)
@@ -196,6 +202,7 @@ const rememberSelection = (blockId: string, event: Event): void => {
   }
 
   syncTextEditorHeight(target)
+  resetCanvasSelectAll()
   lastSelection.value = createSelectionSnapshot(blockId, target)
   selectedImageBlockId.value = null
 }
@@ -205,7 +212,46 @@ const handleTextInput = (blockId: string, event: Event): void => {
 }
 
 const selectImageBlock = (blockId: string): void => {
+  resetCanvasSelectAll()
   selectedImageBlockId.value = blockId
+}
+
+const clearCanvasContent = async (): Promise<void> => {
+  for (const block of form.value.blocks) {
+    revokeBlockPreviewUrl(block)
+  }
+
+  const emptyBlock = createTextBlock()
+  replaceBlocks([emptyBlock])
+  selectedImageBlockId.value = null
+  lastSelection.value = null
+  resetCanvasSelectAll()
+  await focusTextBlock(emptyBlock.id, 0)
+}
+
+const handleCanvasKeydown = async (event: KeyboardEvent): Promise<void> => {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'a') {
+    event.preventDefault()
+    isCanvasSelectAllActive.value = true
+    selectedImageBlockId.value = null
+    lastSelection.value = null
+    return
+  }
+
+  if (!isCanvasSelectAllActive.value) {
+    return
+  }
+
+  if (event.key === 'Backspace' || event.key === 'Delete') {
+    event.preventDefault()
+    await clearCanvasContent()
+    return
+  }
+
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    resetCanvasSelectAll()
+  }
 }
 
 const openImageBlockViewer = (block: NoteFormImageBlock): void => {
@@ -320,6 +366,7 @@ const appendImagesToEnd = (
 
 const openFilePicker = (): void => {
   pickerError.value = null
+  resetCanvasSelectAll()
   fileInput.value?.click()
 }
 
@@ -347,6 +394,7 @@ const handleFileSelection = async (event: Event): Promise<void> => {
       : appendImagesToEnd(imageFiles)
 
   pickerError.value = null
+  resetCanvasSelectAll()
   input.value = ''
   await focusTextBlock(focusTarget.blockId, focusTarget.caretPosition)
 }
@@ -384,6 +432,7 @@ const handleEditorPaste = async (
 
   event.preventDefault()
   pickerError.value = null
+  resetCanvasSelectAll()
 
   const focusTarget = insertImagesAtSelection(
     createSelectionSnapshot(blockId, target),
@@ -586,6 +635,8 @@ onBeforeUnmount(() => {
         :class="{
           'note-form__canvas--immersive': immersive,
         }"
+        @keydown.capture="void handleCanvasKeydown($event)"
+        @pointerdown.capture="resetCanvasSelectAll()"
       >
         <div v-if="showCanvasToolbar" class="note-form__canvas-toolbar">
           <span
