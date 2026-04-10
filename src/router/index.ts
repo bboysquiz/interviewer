@@ -6,7 +6,6 @@ import CategoryNotesPage from '@/pages/CategoryNotesPage.vue'
 import CategoriesPage from '@/pages/CategoriesPage.vue'
 import HistoryDetailPage from '@/pages/HistoryDetailPage.vue'
 import HistoryPage from '@/pages/HistoryPage.vue'
-import HomePage from '@/pages/HomePage.vue'
 import InterviewPage from '@/pages/InterviewPage.vue'
 import NoteDetailPage from '@/pages/NoteDetailPage.vue'
 import SearchPage from '@/pages/SearchPage.vue'
@@ -15,7 +14,9 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'home',
-    component: HomePage,
+    redirect: {
+      name: 'categories',
+    },
     meta: {
       eyebrow: 'Programming Interviewer',
       title: 'Главная',
@@ -117,7 +118,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/:pathMatch(.*)*',
     redirect: {
-      name: 'home',
+      name: 'categories',
     },
   },
 ]

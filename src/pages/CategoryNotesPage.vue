@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -30,7 +30,7 @@ import SurfaceCard from '@/shared/ui/SurfaceCard.vue'
 import { useAttachmentsStore } from '@/stores/attachments'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
 import { useNotesStore } from '@/stores/notes'
-import type { Note } from '@/types'
+import type { Attachment, Note } from '@/types'
 
 type ImportableFile = File & {
   importRelativePath?: string
@@ -48,6 +48,24 @@ interface FailedAttachmentReasonSummary {
   key: string
   label: string
   count: number
+}
+
+interface NoteSearchMatch {
+  id: string
+  blockId: string
+  blockType: 'text' | 'image'
+  label: string
+  preview: string
+  selectionStart: number | null
+  selectionEnd: number | null
+}
+
+interface NoteFormSearchHandle {
+  focusSearchTarget: (target: {
+    blockId: string
+    selectionStart?: number | null
+    selectionEnd?: number | null
+  }) => Promise<void>
 }
 
 const AUTOSAVE_DELAY_MS = 2000
@@ -206,6 +224,113 @@ const formatAiModelLabels = (
   return labels.join(', ')
 }
 
+const parseLocalSectionTitlesInput = (value: string): string[] => {
+  const result: string[] = []
+  const seen = new Set<string>()
+
+  for (const chunk of value.split(/[\r\n,;]+/u)) {
+    const normalized = chunk.trim().replace(/\s+/gu, ' ').slice(0, 80)
+
+    if (!normalized) {
+      continue
+    }
+
+    const dedupeKey = normalized.toLocaleLowerCase('ru')
+
+    if (seen.has(dedupeKey)) {
+      continue
+    }
+
+    seen.add(dedupeKey)
+    result.push(normalized)
+  }
+
+  return result
+}
+
+const normalizeSearchValue = (value: string): string =>
+  value.toLocaleLowerCase('ru').trim()
+
+const buildSearchPreview = (
+  source: string,
+  matchStart: number,
+  matchLength: number,
+): string => {
+  const previewStart = Math.max(0, matchStart - 42)
+  const previewEnd = Math.min(source.length, matchStart + matchLength + 72)
+  const prefix = previewStart > 0 ? '…' : ''
+  const suffix = previewEnd < source.length ? '…' : ''
+
+  return `${prefix}${source.slice(previewStart, previewEnd).trim()}${suffix}`
+}
+
+const collectTextMatchOffsets = (source: string, query: string): number[] => {
+  if (!query) {
+    return []
+  }
+
+  const offsets: number[] = []
+  let fromIndex = 0
+
+  while (fromIndex < source.length) {
+    const matchIndex = source.indexOf(query, fromIndex)
+
+    if (matchIndex < 0) {
+      break
+    }
+
+    offsets.push(matchIndex)
+    fromIndex = matchIndex + Math.max(query.length, 1)
+  }
+
+  return offsets
+}
+
+const findAttachmentSearchHit = (
+  attachment: Attachment | null,
+  query: string,
+): { label: string; preview: string } | null => {
+  if (!attachment || !query) {
+    return null
+  }
+
+  const candidates = [
+    {
+      label: 'Скриншот: текст',
+      value: attachment.extractedText ?? '',
+    },
+    {
+      label: 'Скриншот: описание',
+      value: attachment.imageDescription ?? '',
+    },
+    {
+      label: 'Скриншот: ключевые слова',
+      value: attachment.keyTerms.join(', '),
+    },
+  ]
+
+  for (const candidate of candidates) {
+    const normalizedValue = normalizeSearchValue(candidate.value)
+
+    if (!normalizedValue) {
+      continue
+    }
+
+    const matchIndex = normalizedValue.indexOf(query)
+
+    if (matchIndex < 0) {
+      continue
+    }
+
+    return {
+      label: candidate.label,
+      preview: buildSearchPreview(candidate.value, matchIndex, query.length),
+    }
+  }
+
+  return null
+}
+
 const route = useRoute()
 const router = useRouter()
 const knowledgeBaseStore = useKnowledgeBaseStore()
@@ -259,13 +384,23 @@ const pendingImportSummary = ref<string | null>(null)
 const noteAnalysisError = ref<string | null>(null)
 const noteAnalysisSummary = ref<string | null>(null)
 const noteAnalysisModelLabel = ref<string | null>(null)
-const organizeError = ref<string | null>(null)
-const organizeSummary = ref<string | null>(null)
-const organizeModelLabel = ref<string | null>(null)
+const aiOrganizeError = ref<string | null>(null)
+const aiOrganizeSummary = ref<string | null>(null)
+const aiOrganizeModelLabel = ref<string | null>(null)
+const localOrganizeError = ref<string | null>(null)
+const localOrganizeSummary = ref<string | null>(null)
+const localSectionTitlesInput = ref('')
+const organizeError = aiOrganizeError
+const organizeSummary = aiOrganizeSummary
+const organizeModelLabel = aiOrganizeModelLabel
+const noteFormRef = ref<NoteFormSearchHandle | null>(null)
+const noteSearchInput = ref<HTMLInputElement | null>(null)
+const noteSearchQuery = ref('')
+const activeNoteSearchMatchIndex = ref(0)
 const isSaving = ref(false)
 const isImporting = ref(false)
 const isAnalyzingNote = ref(false)
-const isOrganizing = ref(false)
+const organizationModeInFlight = ref<'ai' | 'local' | null>(null)
 const importFolderInput = ref<HTMLInputElement | null>(null)
 const undoStack = ref<NoteFormValues[]>([])
 const previousSnapshot = ref(cloneNoteFormValues(notebookForm.value))
@@ -362,6 +497,12 @@ const hasScreenshotBlocksWithoutAnalysis = computed(
   () => screenshotBlocksWithoutAnalysis.value.length > 0,
 )
 
+const isOrganizing = computed(() => organizationModeInFlight.value !== null)
+const isLocalOrganizing = computed(() => organizationModeInFlight.value === 'local')
+const parsedLocalSectionTitles = computed(() =>
+  parseLocalSectionTitlesInput(localSectionTitlesInput.value),
+)
+
 const organizeBlockedReason = computed(() => {
   if (!hasScreenshotBlocksWithoutAnalysis.value) {
     return null
@@ -374,6 +515,100 @@ const organizeBlockedReason = computed(() => {
   }
 
   return `Сначала проанализируй все скриншоты темы. Сейчас без AI-анализа ещё ${count} ${pluralizeScreenshots(count)}.`
+})
+
+const normalizedNoteSearchQuery = computed(() =>
+  normalizeSearchValue(noteSearchQuery.value),
+)
+
+const noteSearchMatches = computed<NoteSearchMatch[]>(() => {
+  const query = normalizedNoteSearchQuery.value
+
+  if (!query) {
+    return []
+  }
+
+  const matches: NoteSearchMatch[] = []
+
+  for (const block of notebookForm.value.blocks) {
+    if (block.type === 'text') {
+      const normalizedText = normalizeSearchValue(block.text)
+
+      if (!normalizedText) {
+        continue
+      }
+
+      const offsets = collectTextMatchOffsets(normalizedText, query)
+
+      offsets.forEach((offset, occurrenceIndex) => {
+        matches.push({
+          id: `${block.id}:text:${occurrenceIndex}`,
+          blockId: block.id,
+          blockType: 'text',
+          label: 'Текст заметки',
+          preview: buildSearchPreview(block.text, offset, query.length),
+          selectionStart: offset,
+          selectionEnd: offset + query.length,
+        })
+      })
+
+      continue
+    }
+
+    const attachment = block.attachmentId
+      ? attachmentsById.value[block.attachmentId] ?? null
+      : null
+    const hit = findAttachmentSearchHit(attachment, query)
+
+    if (!hit) {
+      continue
+    }
+
+    matches.push({
+      id: `${block.id}:image`,
+      blockId: block.id,
+      blockType: 'image',
+      label: hit.label,
+      preview: hit.preview,
+      selectionStart: null,
+      selectionEnd: null,
+    })
+  }
+
+  return matches
+})
+
+const searchMatchedBlockIds = computed(() => [
+  ...new Set(noteSearchMatches.value.map((match) => match.blockId)),
+])
+
+const hasActiveNoteSearch = computed(
+  () => normalizedNoteSearchQuery.value.length > 0,
+)
+
+const activeNoteSearchMatch = computed<NoteSearchMatch | null>(() => {
+  if (!noteSearchMatches.value.length) {
+    return null
+  }
+
+  const safeIndex =
+    ((activeNoteSearchMatchIndex.value % noteSearchMatches.value.length) +
+      noteSearchMatches.value.length) %
+    noteSearchMatches.value.length
+
+  return noteSearchMatches.value[safeIndex] ?? null
+})
+
+const noteSearchStatusLabel = computed(() => {
+  if (!hasActiveNoteSearch.value) {
+    return 'Поиск по заметке и распознанным скриншотам'
+  }
+
+  if (!noteSearchMatches.value.length) {
+    return 'Ничего не найдено'
+  }
+
+  return `${activeNoteSearchMatchIndex.value + 1} из ${noteSearchMatches.value.length}`
 })
 
 const formFingerprint = computed(() => createNoteFormFingerprint(notebookForm.value))
@@ -565,6 +800,49 @@ const syncHeaderContext = (): void => {
       })
     },
   })
+}
+
+const focusNoteSearchInput = async (): Promise<void> => {
+  await nextTick()
+  noteSearchInput.value?.focus()
+  noteSearchInput.value?.select()
+}
+
+const focusActiveNoteSearchMatch = async (): Promise<void> => {
+  const activeMatch = activeNoteSearchMatch.value
+
+  if (!activeMatch) {
+    return
+  }
+
+  await noteFormRef.value?.focusSearchTarget({
+    blockId: activeMatch.blockId,
+    selectionStart: activeMatch.selectionStart,
+    selectionEnd: activeMatch.selectionEnd,
+  })
+}
+
+const moveActiveNoteSearchMatch = (direction: 1 | -1): void => {
+  if (!noteSearchMatches.value.length) {
+    return
+  }
+
+  activeNoteSearchMatchIndex.value =
+    ((activeNoteSearchMatchIndex.value + direction) % noteSearchMatches.value.length +
+      noteSearchMatches.value.length) %
+    noteSearchMatches.value.length
+}
+
+const clearNoteSearch = (): void => {
+  noteSearchQuery.value = ''
+  activeNoteSearchMatchIndex.value = 0
+}
+
+const handleCategoryPageKeydown = (event: KeyboardEvent): void => {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
+    event.preventDefault()
+    void focusNoteSearchInput()
+  }
 }
 
 const loadNotebook = async (force = false): Promise<void> => {
@@ -1056,9 +1334,7 @@ const organizeNotebook = async (): Promise<void> => {
     return
   }
 
-  organizeError.value = null
-  organizeSummary.value = null
-  organizeModelLabel.value = null
+  clearOrganizationMessages()
 
   if (!hasMeaningfulNotebookContent.value) {
     organizeError.value =
@@ -1086,7 +1362,7 @@ const organizeNotebook = async (): Promise<void> => {
     return
   }
 
-  isOrganizing.value = true
+  organizationModeInFlight.value = 'ai'
 
   try {
     const response = await notesStore.organizeNote(notebookNote.value.id)
@@ -1103,7 +1379,80 @@ const organizeNotebook = async (): Promise<void> => {
         ? error.message
         : 'Не удалось упорядочить конспект через AI.'
   } finally {
-    isOrganizing.value = false
+    organizationModeInFlight.value = null
+  }
+}
+
+const clearOrganizationMessages = (): void => {
+  aiOrganizeError.value = null
+  aiOrganizeSummary.value = null
+  aiOrganizeModelLabel.value = null
+  localOrganizeError.value = null
+  localOrganizeSummary.value = null
+}
+
+const prepareNotebookForOrganization = async (): Promise<boolean> => {
+  if (isDirty.value || !notebookNote.value) {
+    await saveNotebook()
+
+    if (saveError.value || !notebookNote.value) {
+      return false
+    }
+  }
+
+  return Boolean(notebookNote.value)
+}
+
+const organizeNotebookLocally = async (): Promise<void> => {
+  if (
+    showCategoryNotFound.value ||
+    isSaving.value ||
+    isImporting.value ||
+    isOrganizing.value ||
+    isAnalyzingNote.value
+  ) {
+    return
+  }
+
+  clearOrganizationMessages()
+
+  if (!hasMeaningfulNotebookContent.value) {
+    localOrganizeError.value =
+      'Сначала добавь в тему текст или хотя бы один скриншот, чтобы было что раскладывать по разделам.'
+    return
+  }
+
+  if (parsedLocalSectionTitles.value.length === 0) {
+    localOrganizeError.value =
+      'Добавь хотя бы одно название раздела, по которому нужно разложить заметку.'
+    return
+  }
+
+  if (!(await prepareNotebookForOrganization()) || !notebookNote.value) {
+    localOrganizeError.value = 'Не удалось подготовить тему к локальной сортировке.'
+    return
+  }
+
+  organizationModeInFlight.value = 'local'
+
+  try {
+    const response = await notesStore.organizeNote(notebookNote.value.id, {
+      mode: 'local',
+      sectionTitles: parsedLocalSectionTitles.value,
+    })
+
+    hydrateFormFromNotebook(response.note)
+    localOrganizeSummary.value =
+      response.organized.sectionCount === 1
+        ? 'Локальная сортировка разложила конспект в 1 раздел.'
+        : `Локальная сортировка разложила конспект на ${response.organized.sectionCount} разделов.`
+  } catch (error) {
+    localOrganizeError.value =
+      error instanceof Error
+        ? error.message
+        : 'Не удалось разложить конспект по заданным разделам.'
+  } finally {
+    organizationModeInFlight.value = null
   }
 }
 
@@ -1137,6 +1486,7 @@ const undoLastChange = (): void => {
 watch(
   categoryId,
   () => {
+    clearNoteSearch()
     isNotebookBootstrapPending.value = true
     saveError.value = null
     importError.value = null
@@ -1145,9 +1495,7 @@ watch(
     noteAnalysisError.value = null
     noteAnalysisSummary.value = null
     noteAnalysisModelLabel.value = null
-    organizeError.value = null
-    organizeSummary.value = null
-    organizeModelLabel.value = null
+    clearOrganizationMessages()
     hydrateFormFromNotebook(null)
     void loadNotebook()
   },
@@ -1188,9 +1536,7 @@ watch(
     noteAnalysisError.value = null
     noteAnalysisSummary.value = null
     noteAnalysisModelLabel.value = null
-    organizeError.value = null
-    organizeSummary.value = null
-    organizeModelLabel.value = null
+    clearOrganizationMessages()
     undoStack.value.push(cloneNoteFormValues(previousSnapshot.value))
 
     if (undoStack.value.length > MAX_UNDO_STEPS) {
@@ -1202,6 +1548,46 @@ watch(
     triggerAutosave()
   },
   { deep: true },
+)
+
+watch(
+  normalizedNoteSearchQuery,
+  () => {
+    activeNoteSearchMatchIndex.value = 0
+
+    if (!hasActiveNoteSearch.value) {
+      return
+    }
+
+    void nextTick(() => {
+      void focusActiveNoteSearchMatch()
+    })
+  },
+)
+
+watch(
+  () => activeNoteSearchMatch.value?.id ?? null,
+  (matchId) => {
+    if (!matchId) {
+      return
+    }
+
+    void focusActiveNoteSearchMatch()
+  },
+)
+
+watch(
+  () => noteSearchMatches.value.length,
+  (matchCount) => {
+    if (matchCount === 0) {
+      activeNoteSearchMatchIndex.value = 0
+      return
+    }
+
+    if (activeNoteSearchMatchIndex.value >= matchCount) {
+      activeNoteSearchMatchIndex.value = matchCount - 1
+    }
+  },
 )
 
 watch(
@@ -1217,11 +1603,16 @@ watch(
   { immediate: true },
 )
 
+onMounted(() => {
+  window.addEventListener('keydown', handleCategoryPageKeydown)
+})
+
 onBeforeUnmount(() => {
   stopAutosave()
   stopAnalysisPolling()
   clearContextualFooter()
   revokeFormPreviewUrls(notebookForm.value)
+  window.removeEventListener('keydown', handleCategoryPageKeydown)
 })
 </script>
 
@@ -1242,9 +1633,76 @@ onBeforeUnmount(() => {
     />
 
     <SurfaceCard v-if="!showCategoryNotFound">
+      <div
+        class="category-notes-page__search"
+        :class="{
+          'category-notes-page__search--sticky': hasActiveNoteSearch,
+        }"
+      >
+        <div class="category-notes-page__search-bar">
+          <input
+            ref="noteSearchInput"
+            v-model="noteSearchQuery"
+            class="category-notes-page__search-input"
+            type="search"
+            placeholder="Искать в заметке и по тексту скриншотов"
+            enterkeyhint="search"
+          />
+
+          <button
+            v-if="hasActiveNoteSearch"
+            class="app-button app-button--secondary category-notes-page__search-clear"
+            type="button"
+            @click="clearNoteSearch()"
+          >
+            Сбросить
+          </button>
+        </div>
+
+        <div class="category-notes-page__search-meta">
+          <p class="category-notes-page__search-status">
+            {{ noteSearchStatusLabel }}
+          </p>
+
+          <div
+            v-if="hasActiveNoteSearch"
+            class="category-notes-page__search-actions"
+          >
+            <button
+              class="app-button app-button--secondary category-notes-page__search-nav"
+              type="button"
+              :disabled="noteSearchMatches.length === 0"
+              @click="moveActiveNoteSearchMatch(-1)"
+            >
+              Назад
+            </button>
+
+            <button
+              class="app-button app-button--secondary category-notes-page__search-nav"
+              type="button"
+              :disabled="noteSearchMatches.length === 0"
+              @click="moveActiveNoteSearchMatch(1)"
+            >
+              Далее
+            </button>
+          </div>
+        </div>
+
+        <p
+          v-if="activeNoteSearchMatch"
+          class="category-notes-page__search-preview"
+        >
+          <strong>{{ activeNoteSearchMatch.label }}:</strong>
+          {{ activeNoteSearchMatch.preview }}
+        </p>
+      </div>
+
       <NoteForm
+        ref="noteFormRef"
         v-model="notebookForm"
         :attachments-by-id="attachmentsById"
+        :matched-block-ids="searchMatchedBlockIds"
+        :active-search-block-id="activeNoteSearchMatch?.blockId ?? null"
         hide-title
         immersive
         :show-submit="false"
@@ -1295,6 +1753,45 @@ onBeforeUnmount(() => {
       >
         {{
           isOrganizing ? 'Упорядочиваем...' : 'Упорядочить конспект через AI'
+        }}
+      </button>
+
+      <div class="category-notes-page__local-organize-panel">
+        <label
+          class="category-notes-page__local-organize-label"
+          for="local-section-titles"
+        >
+          Названия разделов для локальной сортировки
+        </label>
+        <textarea
+          id="local-section-titles"
+          v-model="localSectionTitlesInput"
+          class="category-notes-page__local-organize-textarea"
+          rows="4"
+          placeholder="Классы&#10;Объекты&#10;Прототипы&#10;Регулярные выражения"
+        />
+        <p class="category-notes-page__local-organize-hint">
+          Укажи разделы через новую строку, запятую или точку с запятой.
+        </p>
+      </div>
+
+      <button
+        class="app-button app-button--secondary category-notes-page__organize-button"
+        type="button"
+        :disabled="
+          isImporting ||
+          isSaving ||
+          isOrganizing ||
+          isAnalyzingNote ||
+          !hasMeaningfulNotebookContent ||
+          parsedLocalSectionTitles.length === 0
+        "
+        @click="void organizeNotebookLocally()"
+      >
+        {{
+          isLocalOrganizing
+            ? 'Раскладываем по разделам...'
+            : 'Локально разложить по разделам'
         }}
       </button>
 
@@ -1365,6 +1862,20 @@ onBeforeUnmount(() => {
           Нейросеть: {{ organizeModelLabel }}
         </p>
       </AppNotice>
+
+      <AppNotice
+        v-if="localOrganizeError"
+        tone="error"
+        title="Локальная сортировка не завершилась"
+        :message="localOrganizeError"
+      />
+
+      <AppNotice
+        v-if="localOrganizeSummary"
+        tone="success"
+        title="Конспект разложен по разделам"
+        :message="localOrganizeSummary"
+      />
 
       <AppNotice
         v-if="attachmentsLoadError"
@@ -1494,12 +2005,117 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.category-notes-page__search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.category-notes-page__search--sticky {
+  position: sticky;
+  top: 0.65rem;
+  z-index: 8;
+  padding: 0.85rem;
+  border-radius: 24px;
+  background: rgba(255, 251, 246, 0.94);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 16px 28px rgba(71, 50, 24, 0.08);
+}
+
+.category-notes-page__search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.category-notes-page__search-input {
+  width: 100%;
+  min-height: 3.1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(180, 154, 123, 0.28);
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.84rem 1rem;
+  color: var(--text);
+}
+
+.category-notes-page__search-input:focus {
+  outline: none;
+  border-color: rgba(31, 109, 90, 0.34);
+  box-shadow: 0 0 0 3px rgba(31, 109, 90, 0.1);
+}
+
+.category-notes-page__search-clear {
+  flex-shrink: 0;
+}
+
+.category-notes-page__search-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.category-notes-page__search-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.category-notes-page__search-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.category-notes-page__search-nav {
+  min-height: 2.4rem;
+  padding-inline: 0.78rem;
+}
+
+.category-notes-page__search-preview {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
 .category-notes-page__analysis-button,
 .category-notes-page__organize-button,
 .category-notes-page__import-button {
   align-self: flex-start;
 }
 
+.category-notes-page__local-organize-panel {
+  width: min(100%, 38rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.category-notes-page__local-organize-label {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.category-notes-page__local-organize-textarea {
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+  border-radius: 22px;
+  border: 1px solid rgba(180, 154, 123, 0.28);
+  background: rgba(255, 252, 247, 0.9);
+  padding: 0.95rem 1rem;
+  color: var(--text);
+}
+
+.category-notes-page__local-organize-textarea:focus {
+  outline: 2px solid rgba(24, 119, 242, 0.18);
+  border-color: rgba(24, 119, 242, 0.35);
+}
+
+.category-notes-page__local-organize-hint,
 .category-notes-page__organize-hint {
   margin: -0.35rem 0 0;
   max-width: 32rem;

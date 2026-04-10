@@ -21,6 +21,12 @@ interface EditorSelectionSnapshot {
   selectionEnd: number
 }
 
+interface SearchFocusTarget {
+  blockId: string
+  selectionStart?: number | null
+  selectionEnd?: number | null
+}
+
 const form = defineModel<NoteFormValues>({ required: true })
 
 const props = withDefaults(
@@ -43,6 +49,8 @@ const props = withDefaults(
     undoLabel?: string
     showClear?: boolean
     clearLabel?: string
+    matchedBlockIds?: string[]
+    activeSearchBlockId?: string | null
   }>(),
   {
     isSubmitting: false,
@@ -63,6 +71,8 @@ const props = withDefaults(
     showClear: false,
     undoLabel: 'Отменить',
     clearLabel: 'Очистить всё',
+    matchedBlockIds: () => [],
+    activeSearchBlockId: null,
   },
 )
 
@@ -75,12 +85,14 @@ const emit = defineEmits<{
 const fileInput = ref<HTMLInputElement | null>(null)
 const pickerError = ref<string | null>(null)
 const textEditors = new Map<string, HTMLTextAreaElement>()
+const segmentElements = new Map<string, HTMLElement>()
 const lastSelection = ref<EditorSelectionSnapshot | null>(null)
 const selectedImageBlockId = ref<string | null>(null)
 const isCanvasSelectAllActive = ref(false)
 const isClearConfirmOpen = ref(false)
 
 const hasBlocks = computed(() => form.value.blocks.length > 0)
+const matchedBlockIdSet = computed(() => new Set(props.matchedBlockIds ?? []))
 const showCanvasToolbar = computed(
   () => Boolean(props.statusLabel) || props.showUndo || props.showClear,
 )
@@ -164,6 +176,15 @@ const replaceBlocks = (blocks: NoteFormBlock[]): void => {
 const findBlockIndexById = (blockId: string): number =>
   form.value.blocks.findIndex((block) => block.id === blockId)
 
+const registerSegmentElement = (blockId: string, element: Element | null): void => {
+  if (element instanceof HTMLElement) {
+    segmentElements.set(blockId, element)
+    return
+  }
+
+  segmentElements.delete(blockId)
+}
+
 const registerTextEditor = (blockId: string, element: Element | null): void => {
   if (element instanceof HTMLTextAreaElement) {
     textEditors.set(blockId, element)
@@ -172,6 +193,19 @@ const registerTextEditor = (blockId: string, element: Element | null): void => {
   }
 
   textEditors.delete(blockId)
+}
+
+const scrollBlockIntoView = (blockId: string): void => {
+  const segment = segmentElements.get(blockId)
+
+  if (!segment) {
+    return
+  }
+
+  segment.scrollIntoView({
+    behavior: 'smooth',
+    block: 'center',
+  })
 }
 
 const focusTextBlock = async (
@@ -198,6 +232,7 @@ const focusTextBlock = async (
     selectionEnd: nextCaret,
   }
   selectedImageBlockId.value = null
+  scrollBlockIntoView(blockId)
 }
 
 const rememberSelection = (blockId: string, event: Event): void => {
@@ -609,6 +644,58 @@ const handleImageKeydown = async (
   await handleImageBackspace(event, blockIndex)
 }
 
+const focusSearchTarget = async (target: SearchFocusTarget): Promise<void> => {
+  await nextTick()
+
+  const blockIndex = findBlockIndexById(target.blockId)
+  const block = form.value.blocks[blockIndex]
+
+  if (!block) {
+    return
+  }
+
+  if (block.type === 'text') {
+    const editor = textEditors.get(target.blockId)
+
+    if (!editor) {
+      return
+    }
+
+    syncTextEditorHeight(editor)
+    editor.focus()
+    resetCanvasSelectAll()
+    selectedImageBlockId.value = null
+
+    const safeStart = Math.max(
+      0,
+      Math.min(target.selectionStart ?? 0, editor.value.length),
+    )
+    const safeEnd = Math.max(
+      safeStart,
+      Math.min(target.selectionEnd ?? safeStart, editor.value.length),
+    )
+
+    editor.setSelectionRange(safeStart, safeEnd)
+    editor.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+    lastSelection.value = {
+      blockId: target.blockId,
+      selectionStart: safeStart,
+      selectionEnd: safeEnd,
+    }
+    return
+  }
+
+  selectImageBlock(target.blockId)
+  scrollBlockIntoView(target.blockId)
+}
+
+defineExpose({
+  focusSearchTarget,
+})
+
 replaceBlocks(form.value.blocks)
 
 onBeforeUnmount(() => {
@@ -617,6 +704,7 @@ onBeforeUnmount(() => {
   }
 
   textEditors.clear()
+  segmentElements.clear()
 })
 </script>
 
@@ -704,10 +792,15 @@ onBeforeUnmount(() => {
         <article
           v-for="(block, index) in form.blocks"
           :key="block.id"
+          :ref="
+            (element) => registerSegmentElement(block.id, element as Element | null)
+          "
           class="note-form__segment"
           :class="{
             'note-form__segment--image': block.type === 'image',
             'note-form__segment--selected-all': isCanvasSelectAllActive,
+            'note-form__segment--matched': matchedBlockIdSet.has(block.id),
+            'note-form__segment--search-active': activeSearchBlockId === block.id,
           }"
         >
           <textarea
@@ -719,6 +812,8 @@ onBeforeUnmount(() => {
             class="note-form__editor"
             :class="{
               'note-form__editor--selected-all': isCanvasSelectAllActive,
+              'note-form__editor--matched': matchedBlockIdSet.has(block.id),
+              'note-form__editor--search-active': activeSearchBlockId === block.id,
             }"
             rows="1"
             placeholder="Пиши здесь заметку. Скриншот можно вставить через Ctrl+V."
@@ -737,6 +832,8 @@ onBeforeUnmount(() => {
             :class="{
               'note-form__image-card--selected': selectedImageBlockId === block.id,
               'note-form__image-card--selected-all': isCanvasSelectAllActive,
+              'note-form__image-card--matched': matchedBlockIdSet.has(block.id),
+              'note-form__image-card--search-active': activeSearchBlockId === block.id,
             }"
             type="button"
             :disabled="isSubmitting"
@@ -939,6 +1036,14 @@ onBeforeUnmount(() => {
   background: rgba(31, 109, 90, 0.06);
 }
 
+.note-form__segment--matched {
+  background: rgba(207, 116, 64, 0.08);
+}
+
+.note-form__segment--search-active {
+  background: rgba(31, 109, 90, 0.1);
+}
+
 .note-form__editor {
   width: 100%;
   min-height: 2rem;
@@ -960,6 +1065,16 @@ onBeforeUnmount(() => {
 .note-form__editor--selected-all {
   border-radius: 14px;
   background: rgba(31, 109, 90, 0.08);
+}
+
+.note-form__editor--matched {
+  border-radius: 14px;
+  background: rgba(207, 116, 64, 0.08);
+}
+
+.note-form__editor--search-active {
+  border-radius: 14px;
+  background: rgba(31, 109, 90, 0.12);
 }
 
 .note-form__image-card {
@@ -988,6 +1103,18 @@ onBeforeUnmount(() => {
   border-color: rgba(31, 109, 90, 0.24);
   box-shadow: 0 0 0 3px rgba(31, 109, 90, 0.08);
   background: rgba(255, 255, 255, 0.44);
+}
+
+.note-form__image-card--matched {
+  border-color: rgba(207, 116, 64, 0.32);
+  box-shadow: 0 0 0 3px rgba(207, 116, 64, 0.1);
+  background: rgba(255, 247, 241, 0.72);
+}
+
+.note-form__image-card--search-active {
+  border-color: rgba(31, 109, 90, 0.38);
+  box-shadow: 0 0 0 4px rgba(31, 109, 90, 0.12);
+  background: rgba(245, 252, 249, 0.88);
 }
 
 .note-form__image-wrap,

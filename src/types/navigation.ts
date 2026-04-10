@@ -1,5 +1,4 @@
 export type AppRouteName =
-  | 'home'
   | 'categories'
   | 'search'
   | 'interview'

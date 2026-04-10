@@ -52,6 +52,7 @@ export interface OrganizeNoteResponse {
   note: Note
   organized: {
     sectionCount: number
+    mode?: 'ai' | 'local'
   }
   ai: {
     model: string
@@ -62,6 +63,11 @@ export interface OrganizeNoteResponse {
       totalTokens: number | null
     } | null
   }
+}
+
+export interface OrganizeNoteInput {
+  mode?: 'ai' | 'local'
+  sectionTitles?: string[]
 }
 
 export interface UpdateAttachmentProcessingInput {
@@ -154,9 +160,10 @@ export const knowledgeBaseApi = {
       body: JSON.stringify(input),
     }),
 
-  organizeNote: (noteId: string) =>
+  organizeNote: (noteId: string, input: OrganizeNoteInput = {}) =>
     requestJson<OrganizeNoteResponse>(`${API_PATHS.notes}/${noteId}/organize`, {
       method: 'POST',
+      body: JSON.stringify(input),
     }),
 
   deleteNote: (noteId: string) =>

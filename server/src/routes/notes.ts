@@ -405,9 +405,27 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       existing.content,
       currentAttachmentIds,
     )
+    const body = (request.body ?? {}) as Record<string, unknown>
+    const requestedMode = coerceString(body.mode)
+    const mode = requestedMode === 'local' ? 'local' : 'ai'
+    const sectionTitles = Array.isArray(body.sectionTitles)
+      ? body.sectionTitles
+          .map((value) => coerceString(value))
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .slice(0, 24)
+      : []
     const categoryRow = categoryByIdStatement.get(existing.category_id) as
       | { id: string; name?: string }
       | undefined
+
+    if (mode === 'local' && sectionTitles.length === 0) {
+      response.status(400).json({
+        message: 'Добавь хотя бы одно название раздела для локальной сортировки.',
+        code: 'ai_validation_error',
+      })
+      return
+    }
 
     try {
       const organized = await reorganizeNoteContent({
@@ -425,6 +443,9 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
             },
           ]),
         ),
+      }, {
+        mode,
+        sectionTitles,
       })
       const updatedAt = nowIso()
       const nextRawText = deriveRawTextFromContentBlocks(organized.contentBlocks)
@@ -463,6 +484,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         note: getNoteById(noteId),
         organized: {
           sectionCount: organized.sectionCount,
+          mode,
         },
         ai: {
           model: organized.model,

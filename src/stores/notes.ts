@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import {
   knowledgeBaseApi,
   type CreateNoteInput,
+  type OrganizeNoteInput,
   type OrganizeNoteResponse,
   type UpdateNoteInput,
 } from '@/services/client/knowledgeBaseApi'
@@ -156,8 +157,11 @@ export const useNotesStore = defineStore('notes', () => {
     return updatedNote
   }
 
-  const organizeNote = async (noteId: string): Promise<OrganizeNoteResponse> => {
-    const response = await knowledgeBaseApi.organizeNote(noteId)
+  const organizeNote = async (
+    noteId: string,
+    input: OrganizeNoteInput = {},
+  ): Promise<OrganizeNoteResponse> => {
+    const response = await knowledgeBaseApi.organizeNote(noteId, input)
     upsertNote(response.note)
     await useKnowledgeBaseStore().loadCategories()
     return response
