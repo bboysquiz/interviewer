@@ -65,7 +65,14 @@ interface NoteFormSearchHandle {
     blockId: string
     selectionStart?: number | null
     selectionEnd?: number | null
+    focus?: boolean
   }) => Promise<void>
+}
+
+interface LocalSectionDraft {
+  id: string
+  title: string
+  isEditing: boolean
 }
 
 const AUTOSAVE_DELAY_MS = 2000
@@ -224,30 +231,6 @@ const formatAiModelLabels = (
   return labels.join(', ')
 }
 
-const parseLocalSectionTitlesInput = (value: string): string[] => {
-  const result: string[] = []
-  const seen = new Set<string>()
-
-  for (const chunk of value.split(/[\r\n,;]+/u)) {
-    const normalized = chunk.trim().replace(/\s+/gu, ' ').slice(0, 80)
-
-    if (!normalized) {
-      continue
-    }
-
-    const dedupeKey = normalized.toLocaleLowerCase('ru')
-
-    if (seen.has(dedupeKey)) {
-      continue
-    }
-
-    seen.add(dedupeKey)
-    result.push(normalized)
-  }
-
-  return result
-}
-
 const normalizeSearchValue = (value: string): string =>
   value.toLocaleLowerCase('ru').trim()
 
@@ -331,6 +314,14 @@ const findAttachmentSearchHit = (
   return null
 }
 
+const createLocalSectionDraftId = (): string => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+
+  return `local-section-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 const route = useRoute()
 const router = useRouter()
 const knowledgeBaseStore = useKnowledgeBaseStore()
@@ -389,7 +380,8 @@ const aiOrganizeSummary = ref<string | null>(null)
 const aiOrganizeModelLabel = ref<string | null>(null)
 const localOrganizeError = ref<string | null>(null)
 const localOrganizeSummary = ref<string | null>(null)
-const localSectionTitlesInput = ref('')
+const localSectionDrafts = ref<LocalSectionDraft[]>([])
+const isLocalSectionsModalOpen = ref(false)
 const organizeError = aiOrganizeError
 const organizeSummary = aiOrganizeSummary
 const organizeModelLabel = aiOrganizeModelLabel
@@ -499,8 +491,11 @@ const hasScreenshotBlocksWithoutAnalysis = computed(
 
 const isOrganizing = computed(() => organizationModeInFlight.value !== null)
 const isLocalOrganizing = computed(() => organizationModeInFlight.value === 'local')
-const parsedLocalSectionTitles = computed(() =>
-  parseLocalSectionTitlesInput(localSectionTitlesInput.value),
+const savedLocalSectionTitles = computed(() =>
+  localSectionDrafts.value
+    .filter((draft) => !draft.isEditing)
+    .map((draft) => draft.title.trim())
+    .filter(Boolean),
 )
 
 const organizeBlockedReason = computed(() => {
@@ -808,7 +803,9 @@ const focusNoteSearchInput = async (): Promise<void> => {
   noteSearchInput.value?.select()
 }
 
-const focusActiveNoteSearchMatch = async (): Promise<void> => {
+const focusActiveNoteSearchMatch = async (
+  options: { focusEditor?: boolean } = {},
+): Promise<void> => {
   const activeMatch = activeNoteSearchMatch.value
 
   if (!activeMatch) {
@@ -819,6 +816,7 @@ const focusActiveNoteSearchMatch = async (): Promise<void> => {
     blockId: activeMatch.blockId,
     selectionStart: activeMatch.selectionStart,
     selectionEnd: activeMatch.selectionEnd,
+    focus: options.focusEditor ?? false,
   })
 }
 
@@ -838,7 +836,86 @@ const clearNoteSearch = (): void => {
   activeNoteSearchMatchIndex.value = 0
 }
 
+const openLocalSectionsModal = (): void => {
+  isLocalSectionsModalOpen.value = true
+
+  if (localSectionDrafts.value.length === 0) {
+    localSectionDrafts.value = [
+      {
+        id: createLocalSectionDraftId(),
+        title: '',
+        isEditing: true,
+      },
+    ]
+  }
+}
+
+const closeLocalSectionsModal = (): void => {
+  isLocalSectionsModalOpen.value = false
+}
+
+const addLocalSectionDraft = (): void => {
+  localSectionDrafts.value.push({
+    id: createLocalSectionDraftId(),
+    title: '',
+    isEditing: true,
+  })
+}
+
+const updateLocalSectionDraftTitle = (draftId: string, value: string): void => {
+  localSectionDrafts.value = localSectionDrafts.value.map((draft) =>
+    draft.id === draftId
+      ? {
+          ...draft,
+          title: value,
+        }
+      : draft,
+  )
+}
+
+const saveLocalSectionDraft = (draftId: string): void => {
+  localSectionDrafts.value = localSectionDrafts.value
+    .map((draft) => {
+      if (draft.id !== draftId) {
+        return draft
+      }
+
+      return {
+        ...draft,
+        title: draft.title.trim().replace(/\s+/gu, ' ').slice(0, 80),
+        isEditing: false,
+      }
+    })
+    .filter((draft) => draft.title.length > 0)
+}
+
+const editLocalSectionDraft = (draftId: string): void => {
+  localSectionDrafts.value = localSectionDrafts.value.map((draft) =>
+    draft.id === draftId
+      ? {
+          ...draft,
+          isEditing: true,
+        }
+      : draft,
+  )
+}
+
+const removeLocalSectionDraft = (draftId: string): void => {
+  localSectionDrafts.value = localSectionDrafts.value.filter(
+    (draft) => draft.id !== draftId,
+  )
+}
+
+const localSectionDraftCanSave = (draft: LocalSectionDraft): boolean =>
+  draft.title.trim().length > 0
+
 const handleCategoryPageKeydown = (event: KeyboardEvent): void => {
+  if (event.key === 'Escape' && isLocalSectionsModalOpen.value) {
+    event.preventDefault()
+    closeLocalSectionsModal()
+    return
+  }
+
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f') {
     event.preventDefault()
     void focusNoteSearchInput()
@@ -1422,7 +1499,7 @@ const organizeNotebookLocally = async (): Promise<void> => {
     return
   }
 
-  if (parsedLocalSectionTitles.value.length === 0) {
+  if (savedLocalSectionTitles.value.length === 0) {
     localOrganizeError.value =
       'Добавь хотя бы одно название раздела, по которому нужно разложить заметку.'
     return
@@ -1438,7 +1515,7 @@ const organizeNotebookLocally = async (): Promise<void> => {
   try {
     const response = await notesStore.organizeNote(notebookNote.value.id, {
       mode: 'local',
-      sectionTitles: parsedLocalSectionTitles.value,
+      sectionTitles: savedLocalSectionTitles.value,
     })
 
     hydrateFormFromNotebook(response.note)
@@ -1487,6 +1564,8 @@ watch(
   categoryId,
   () => {
     clearNoteSearch()
+    localSectionDrafts.value = []
+    isLocalSectionsModalOpen.value = false
     isNotebookBootstrapPending.value = true
     saveError.value = null
     importError.value = null
@@ -1591,6 +1670,18 @@ watch(
 )
 
 watch(
+  isLocalSectionsModalOpen,
+  (isOpen) => {
+    if (typeof document === 'undefined') {
+      return
+    }
+
+    document.body.style.overflow = isOpen ? 'hidden' : ''
+  },
+  { immediate: true },
+)
+
+watch(
   () => attachmentsInAnalysis.value.length > 0,
   (isActive) => {
     if (isActive) {
@@ -1612,6 +1703,9 @@ onBeforeUnmount(() => {
   stopAnalysisPolling()
   clearContextualFooter()
   revokeFormPreviewUrls(notebookForm.value)
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = ''
+  }
   window.removeEventListener('keydown', handleCategoryPageKeydown)
 })
 </script>
@@ -1756,23 +1850,32 @@ onBeforeUnmount(() => {
         }}
       </button>
 
-      <div class="category-notes-page__local-organize-panel">
-        <label
-          class="category-notes-page__local-organize-label"
-          for="local-section-titles"
-        >
-          Названия разделов для локальной сортировки
-        </label>
-        <textarea
-          id="local-section-titles"
-          v-model="localSectionTitlesInput"
-          class="category-notes-page__local-organize-textarea"
-          rows="4"
-          placeholder="Классы&#10;Объекты&#10;Прототипы&#10;Регулярные выражения"
-        />
-        <p class="category-notes-page__local-organize-hint">
-          Укажи разделы через новую строку, запятую или точку с запятой.
+      <button
+        class="app-button app-button--secondary category-notes-page__organize-button"
+        type="button"
+        :disabled="isImporting || isSaving || isOrganizing || isAnalyzingNote"
+        @click="openLocalSectionsModal()"
+      >
+        Указать разделы для локальной сортировки
+      </button>
+
+      <div
+        v-if="savedLocalSectionTitles.length"
+        class="category-notes-page__local-sections-summary"
+      >
+        <p class="category-notes-page__local-sections-summary-label">
+          Пользовательские разделы
         </p>
+
+        <div class="category-notes-page__local-sections-list">
+          <span
+            v-for="sectionTitle in savedLocalSectionTitles"
+            :key="sectionTitle"
+            class="category-notes-page__local-section-chip"
+          >
+            {{ sectionTitle }}
+          </span>
+        </div>
       </div>
 
       <button
@@ -1784,14 +1887,14 @@ onBeforeUnmount(() => {
           isOrganizing ||
           isAnalyzingNote ||
           !hasMeaningfulNotebookContent ||
-          parsedLocalSectionTitles.length === 0
+          savedLocalSectionTitles.length === 0
         "
         @click="void organizeNotebookLocally()"
       >
         {{
           isLocalOrganizing
             ? 'Раскладываем по разделам...'
-            : 'Локально разложить по разделам'
+            : 'Отсортировать по пользовательским разделам'
         }}
       </button>
 
@@ -1813,6 +1916,114 @@ onBeforeUnmount(() => {
         multiple
         @change="void handleImportSelection($event)"
       />
+
+      <Teleport to="body">
+        <div
+          v-if="isLocalSectionsModalOpen"
+          class="category-notes-page__sections-modal"
+          role="dialog"
+          aria-modal="true"
+          @click="closeLocalSectionsModal()"
+        >
+          <div class="category-notes-page__sections-modal-backdrop" />
+
+          <div
+            class="category-notes-page__sections-modal-panel"
+            @click.stop
+          >
+            <div class="category-notes-page__sections-modal-header">
+              <div class="category-notes-page__sections-modal-copy">
+                <h2 class="category-notes-page__sections-modal-title">
+                  Разделы для локальной сортировки
+                </h2>
+                <p class="category-notes-page__sections-modal-description">
+                  Добавь собственные разделы, по которым нужно разложить конспект.
+                </p>
+              </div>
+
+              <button
+                class="category-notes-page__sections-modal-close"
+                type="button"
+                aria-label="Закрыть модальное окно"
+                @click="closeLocalSectionsModal()"
+              >
+                ×
+              </button>
+            </div>
+
+            <div class="category-notes-page__sections-modal-list">
+              <div
+                v-for="draft in localSectionDrafts"
+                :key="draft.id"
+                class="category-notes-page__sections-modal-item"
+              >
+                <input
+                  v-if="draft.isEditing"
+                  :value="draft.title"
+                  class="category-notes-page__sections-modal-input"
+                  type="text"
+                  maxlength="80"
+                  placeholder="Название раздела"
+                  @input="
+                    updateLocalSectionDraftTitle(
+                      draft.id,
+                      ($event.target as HTMLInputElement).value,
+                    )
+                  "
+                />
+
+                <span
+                  v-else
+                  class="category-notes-page__sections-modal-text"
+                >
+                  {{ draft.title }}
+                </span>
+
+                <div class="category-notes-page__sections-modal-item-actions">
+                  <button
+                    class="category-notes-page__sections-modal-icon-button"
+                    type="button"
+                    :disabled="!draft.isEditing || !localSectionDraftCanSave(draft)"
+                    aria-label="Сохранить раздел"
+                    @click="saveLocalSectionDraft(draft.id)"
+                  >
+                    ✓
+                  </button>
+
+                  <button
+                    class="category-notes-page__sections-modal-icon-button"
+                    type="button"
+                    :disabled="draft.isEditing"
+                    aria-label="Редактировать раздел"
+                    @click="editLocalSectionDraft(draft.id)"
+                  >
+                    ✎
+                  </button>
+
+                  <button
+                    class="category-notes-page__sections-modal-icon-button category-notes-page__sections-modal-icon-button--danger"
+                    type="button"
+                    aria-label="Удалить раздел"
+                    @click="removeLocalSectionDraft(draft.id)"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="category-notes-page__sections-modal-footer">
+              <button
+                class="app-button app-button--secondary"
+                type="button"
+                @click="addLocalSectionDraft()"
+              >
+                ＋ Добавить раздел
+              </button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
 
       <AppNotice
         v-if="noteAnalysisError"
@@ -2086,42 +2297,187 @@ onBeforeUnmount(() => {
   align-self: flex-start;
 }
 
-.category-notes-page__local-organize-panel {
+.category-notes-page__local-sections-summary {
   width: min(100%, 38rem);
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.55rem;
 }
 
-.category-notes-page__local-organize-label {
+.category-notes-page__local-sections-summary-label {
+  margin: 0;
   font-size: 0.88rem;
   font-weight: 700;
   color: var(--text);
 }
 
-.category-notes-page__local-organize-textarea {
-  width: 100%;
-  min-height: 7rem;
-  resize: vertical;
-  border-radius: 22px;
-  border: 1px solid rgba(180, 154, 123, 0.28);
-  background: rgba(255, 252, 247, 0.9);
-  padding: 0.95rem 1rem;
-  color: var(--text);
+.category-notes-page__local-sections-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
 }
 
-.category-notes-page__local-organize-textarea:focus {
-  outline: 2px solid rgba(24, 119, 242, 0.18);
-  border-color: rgba(24, 119, 242, 0.35);
+.category-notes-page__local-section-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.1rem;
+  padding: 0.42rem 0.82rem;
+  border-radius: 999px;
+  background: rgba(31, 109, 90, 0.1);
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  font-weight: 700;
 }
 
-.category-notes-page__local-organize-hint,
 .category-notes-page__organize-hint {
   margin: -0.35rem 0 0;
   max-width: 32rem;
   color: var(--text-muted);
   font-size: 0.88rem;
   line-height: 1.45;
+}
+
+.category-notes-page__sections-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.category-notes-page__sections-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(35, 28, 21, 0.28);
+  backdrop-filter: blur(12px);
+}
+
+.category-notes-page__sections-modal-panel {
+  position: relative;
+  width: min(100%, 36rem);
+  max-height: min(80vh, 42rem);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.1rem;
+  border: 1px solid rgba(180, 154, 123, 0.28);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 243, 0.98), rgba(255, 246, 236, 0.96));
+  box-shadow: 0 28px 48px rgba(35, 28, 21, 0.2);
+}
+
+.category-notes-page__sections-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.category-notes-page__sections-modal-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.category-notes-page__sections-modal-title {
+  margin: 0;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  font-size: 1.36rem;
+  line-height: 1.08;
+}
+
+.category-notes-page__sections-modal-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.category-notes-page__sections-modal-close {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgba(180, 154, 123, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font-size: 1.2rem;
+}
+
+.category-notes-page__sections-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.category-notes-page__sections-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.8rem 0.85rem;
+  border: 1px solid rgba(180, 154, 123, 0.22);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.category-notes-page__sections-modal-input,
+.category-notes-page__sections-modal-text {
+  flex: 1;
+}
+
+.category-notes-page__sections-modal-input {
+  min-height: 2.9rem;
+  border-radius: 16px;
+  border: 1px solid rgba(180, 154, 123, 0.28);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.72rem 0.85rem;
+  color: var(--text);
+}
+
+.category-notes-page__sections-modal-input:focus {
+  outline: none;
+  border-color: rgba(31, 109, 90, 0.34);
+  box-shadow: 0 0 0 3px rgba(31, 109, 90, 0.1);
+}
+
+.category-notes-page__sections-modal-text {
+  min-height: 2.9rem;
+  display: flex;
+  align-items: center;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.category-notes-page__sections-modal-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.category-notes-page__sections-modal-icon-button {
+  width: 2.45rem;
+  height: 2.45rem;
+  border: 1px solid rgba(180, 154, 123, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.category-notes-page__sections-modal-icon-button:disabled {
+  opacity: 0.45;
+}
+
+.category-notes-page__sections-modal-icon-button--danger {
+  color: #9f3b35;
+}
+
+.category-notes-page__sections-modal-footer {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .category-notes-page__import-input {

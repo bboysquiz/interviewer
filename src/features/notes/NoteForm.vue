@@ -25,6 +25,7 @@ interface SearchFocusTarget {
   blockId: string
   selectionStart?: number | null
   selectionEnd?: number | null
+  focus?: boolean
 }
 
 const form = defineModel<NoteFormValues>({ required: true })
@@ -656,13 +657,13 @@ const focusSearchTarget = async (target: SearchFocusTarget): Promise<void> => {
 
   if (block.type === 'text') {
     const editor = textEditors.get(target.blockId)
+    const shouldFocus = target.focus ?? true
 
     if (!editor) {
       return
     }
 
     syncTextEditorHeight(editor)
-    editor.focus()
     resetCanvasSelectAll()
     selectedImageBlockId.value = null
 
@@ -675,16 +676,22 @@ const focusSearchTarget = async (target: SearchFocusTarget): Promise<void> => {
       Math.min(target.selectionEnd ?? safeStart, editor.value.length),
     )
 
-    editor.setSelectionRange(safeStart, safeEnd)
-    editor.scrollIntoView({
-      behavior: 'smooth',
-      block: 'center',
-    })
-    lastSelection.value = {
-      blockId: target.blockId,
-      selectionStart: safeStart,
-      selectionEnd: safeEnd,
+    if (shouldFocus) {
+      editor.focus()
+      editor.setSelectionRange(safeStart, safeEnd)
+      editor.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
+      lastSelection.value = {
+        blockId: target.blockId,
+        selectionStart: safeStart,
+        selectionEnd: safeEnd,
+      }
+      return
     }
+
+    scrollBlockIntoView(target.blockId)
     return
   }
 
