@@ -7,7 +7,7 @@ interface OpenImageViewerInput {
 }
 
 const MIN_IMAGE_SCALE = 1
-const MAX_IMAGE_SCALE = 4
+const MAX_IMAGE_SCALE = 6
 const IMAGE_SCALE_STEP = 0.25
 
 const isImageViewerOpen = ref(false)
