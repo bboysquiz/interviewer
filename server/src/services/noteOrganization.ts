@@ -78,6 +78,8 @@ interface HeuristicCluster {
 interface LocalSectionGuide {
   title: string
   key: string
+  normalizedTitle: string
+  titleTokens: Set<string>
   tokenWeights: Map<string, number>
   topicKeys: Set<string>
 }
@@ -657,8 +659,9 @@ const normalizeSectionTitles = (values: string[]): string[] => {
 const buildLocalSectionGuide = (title: string): LocalSectionGuide => {
   const topicMatches = detectTopicPatterns(title)
   const tokenWeights = new Map<string, number>()
+  const titleTokens = new Set(tokenizeForHeuristic(title))
 
-  for (const token of tokenizeForHeuristic(title)) {
+  for (const token of titleTokens) {
     addWeight(tokenWeights, token, 8)
   }
 
@@ -669,6 +672,8 @@ const buildLocalSectionGuide = (title: string): LocalSectionGuide => {
   return {
     title,
     key: topicMatches[0]?.key ?? buildPrimaryKeyFromTitle(title),
+    normalizedTitle: title.toLocaleLowerCase('ru').replace(/ё/gu, 'е').trim(),
+    titleTokens,
     tokenWeights: keepTopWeights(tokenWeights, 12),
     topicKeys: new Set(topicMatches.map((topic) => topic.key)),
   }
@@ -680,9 +685,32 @@ const scoreSectionGuideForProfile = (
   isActiveGuide: boolean,
 ): number => {
   let score = 0
+  const normalizedSourceText = profile.sourceText
+    .toLocaleLowerCase('ru')
+    .replace(/ё/gu, 'е')
+  const normalizedTitleCandidates = profile.titleCandidates.map((title) =>
+    title.toLocaleLowerCase('ru').replace(/ё/gu, 'е'),
+  )
 
   if (guide.key === profile.primaryKey && guide.key !== 'misc') {
     score += 24
+  }
+
+  if (
+    guide.normalizedTitle &&
+    normalizedSourceText.includes(guide.normalizedTitle)
+  ) {
+    score += 34
+  }
+
+  if (
+    normalizedTitleCandidates.some(
+      (candidate) =>
+        candidate.includes(guide.normalizedTitle) ||
+        guide.normalizedTitle.includes(candidate),
+    )
+  ) {
+    score += 18
   }
 
   for (const topicKey of profile.topicKeys) {
@@ -696,6 +724,10 @@ const scoreSectionGuideForProfile = (
 
     if (guideWeight > 0) {
       score += Math.min(guideWeight + 2, weight + 4)
+    }
+
+    if (guide.titleTokens.has(token)) {
+      score += 6
     }
   }
 
@@ -1214,14 +1246,18 @@ const buildGuidedLocalOrganization = (
       }
     })
 
-    const hasStrongMatch = bestScore >= (profile.canStartSection ? 12 : 4)
+    const hasStrongMatch = bestScore >= (profile.canStartSection ? 10 : 3)
+    const hasAnyMatch = bestScore > 0
     const canReuseActiveSection: boolean =
       activeGuideIndex !== null &&
-      (!profile.hasStrongTopic || bestGuideIndex === activeGuideIndex) &&
-      (profile.isLowInformation || bestScore >= 3)
+      (profile.isLowInformation ||
+        bestScore <= 0 ||
+        (!profile.hasStrongTopic && bestScore < 6))
 
     const targetGuideIndex: number = hasStrongMatch
       ? bestGuideIndex
+      : hasAnyMatch
+        ? bestGuideIndex
       : canReuseActiveSection
         ? (activeGuideIndex ?? -1)
         : -1
