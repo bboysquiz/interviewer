@@ -102,6 +102,53 @@ const showFooterActions = computed(() => props.showSubmit || props.showCancel)
 const attachmentForBlock = (block: NoteFormImageBlock): Attachment | null =>
   block.attachmentId ? props.attachmentsById[block.attachmentId] ?? null : null
 
+const imageBlockAnalysisStatus = (
+  block: NoteFormImageBlock,
+): {
+  label: string
+  tone: 'pending' | 'processing' | 'ready' | 'failed'
+} => {
+  if (block.uploadFile) {
+    return {
+      label: 'Не сохранён',
+      tone: 'pending',
+    }
+  }
+
+  const attachment = attachmentForBlock(block)
+
+  if (!attachment) {
+    return {
+      label: 'Без AI-анализа',
+      tone: 'pending',
+    }
+  }
+
+  switch (attachment.processingStatus) {
+    case 'ready':
+      return {
+        label: 'AI проанализировал',
+        tone: 'ready',
+      }
+    case 'processing':
+      return {
+        label: 'AI анализирует',
+        tone: 'processing',
+      }
+    case 'failed':
+      return {
+        label: 'Ошибка AI-анализа',
+        tone: 'failed',
+      }
+    case 'pending':
+    default:
+      return {
+        label: 'Ждёт AI-анализа',
+        tone: 'pending',
+      }
+  }
+}
+
 const attachmentPreviewUrl = (block: NoteFormImageBlock): string | null => {
   if (block.localPreviewUrl) {
     return block.localPreviewUrl
@@ -160,11 +207,27 @@ const createEditorBlocks = (blocks: NoteFormBlock[]): NoteFormBlock[] => {
     return [createTextBlock()]
   }
 
-  if (merged[merged.length - 1]?.type === 'image') {
-    merged.push(createTextBlock())
+  const withInsertionPoints: NoteFormBlock[] = []
+
+  if (merged[0]?.type === 'image') {
+    withInsertionPoints.push(createTextBlock())
   }
 
-  return merged
+  merged.forEach((block, index) => {
+    withInsertionPoints.push(block)
+
+    if (block.type !== 'image') {
+      return
+    }
+
+    const nextBlock = merged[index + 1]
+
+    if (!nextBlock || nextBlock.type === 'image') {
+      withInsertionPoints.push(createTextBlock())
+    }
+  })
+
+  return withInsertionPoints
 }
 
 const replaceBlocks = (blocks: NoteFormBlock[]): void => {
@@ -842,6 +905,8 @@ onBeforeUnmount(() => {
               'note-form__image-card--matched': matchedBlockIdSet.has(block.id),
               'note-form__image-card--search-active': activeSearchBlockId === block.id,
             }"
+            :data-analysis-status="imageBlockAnalysisStatus(block).label"
+            :data-analysis-tone="imageBlockAnalysisStatus(block).tone"
             type="button"
             :disabled="isSubmitting"
             @focus="selectImageBlock(block.id)"
@@ -1085,6 +1150,7 @@ onBeforeUnmount(() => {
 }
 
 .note-form__image-card {
+  position: relative;
   display: block;
   width: 100%;
   padding: 0;
@@ -1096,6 +1162,42 @@ onBeforeUnmount(() => {
     border-color 0.2s ease,
     box-shadow 0.2s ease,
     background-color 0.2s ease;
+}
+
+.note-form__image-card::after {
+  content: attr(data-analysis-status);
+  position: absolute;
+  top: 0.9rem;
+  left: 0.9rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  max-width: calc(100% - 1.8rem);
+  padding: 0.32rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(96, 80, 61, 0.84);
+  color: rgba(255, 251, 246, 0.96);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.note-form__image-card[data-analysis-tone='ready']::after {
+  background: rgba(31, 109, 90, 0.9);
+}
+
+.note-form__image-card[data-analysis-tone='processing']::after {
+  background: rgba(207, 116, 64, 0.92);
+}
+
+.note-form__image-card[data-analysis-tone='failed']::after {
+  background: rgba(181, 65, 59, 0.92);
 }
 
 .note-form__image-card:focus-visible,
@@ -1126,6 +1228,7 @@ onBeforeUnmount(() => {
 
 .note-form__image-wrap,
 .note-form__image-fallback {
+  position: relative;
   overflow: hidden;
   border-radius: 20px;
   background: rgba(240, 229, 215, 0.62);

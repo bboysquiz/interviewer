@@ -769,14 +769,19 @@ const applyFormSnapshot = (
   isApplyingSnapshot.value = false
 }
 
-const hydrateFormFromNotebook = (note: Note | null): void => {
+const hydrateFormFromNotebook = (
+  note: Note | null,
+  options: {
+    resetUndo?: boolean
+  } = {},
+): void => {
   const nextValue = note ? createNoteFormFromNote(note) : buildEmptyNotebookForm()
   nextValue.title = buildNotebookTitle()
 
   applyFormSnapshot(nextValue, {
     markAsSaved: true,
     savedAt: note?.updatedAt ?? null,
-    resetUndo: true,
+    resetUndo: options.resetUndo ?? true,
     revokeCurrentPreviewUrls: true,
   })
 }
@@ -1005,7 +1010,9 @@ const syncFormFromNotebook = (note: Note | null): void => {
   }
 
   if (isNotebookBootstrapPending.value) {
-    hydrateFormFromNotebook(note)
+    hydrateFormFromNotebook(note, {
+      resetUndo: true,
+    })
     return
   }
 
@@ -1013,7 +1020,9 @@ const syncFormFromNotebook = (note: Note | null): void => {
     return
   }
 
-  hydrateFormFromNotebook(note)
+  hydrateFormFromNotebook(note, {
+    resetUndo: false,
+  })
 }
 
 const saveNotebook = async (): Promise<void> => {
@@ -1054,7 +1063,9 @@ const saveNotebook = async (): Promise<void> => {
       }
 
       if (formFingerprint.value === saveSnapshotFingerprint) {
-        hydrateFormFromNotebook(savedNote)
+        hydrateFormFromNotebook(savedNote, {
+          resetUndo: false,
+        })
       } else {
         lastSavedAt.value = savedNote.updatedAt
         triggerAutosave()
@@ -1075,7 +1086,9 @@ const saveNotebook = async (): Promise<void> => {
     await attachmentsStore.loadAttachmentsByNote(currentNoteId, { force: true })
 
     if (formFingerprint.value === saveSnapshotFingerprint) {
-      hydrateFormFromNotebook(updatedNote)
+      hydrateFormFromNotebook(updatedNote, {
+        resetUndo: false,
+      })
     } else {
       lastSavedAt.value = updatedNote.updatedAt
       triggerAutosave()
@@ -1388,7 +1401,9 @@ const importAppleNotesFiles = async (files: File[]): Promise<void> => {
       await attachmentsStore.loadAttachmentsByNote(persistedNote.id, {
         force: true,
       })
-      hydrateFormFromNotebook(persistedNote)
+      hydrateFormFromNotebook(persistedNote, {
+        resetUndo: false,
+      })
     }
   } catch (error) {
     importError.value =
