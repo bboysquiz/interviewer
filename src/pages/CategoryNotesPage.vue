@@ -358,6 +358,19 @@ const loadError = computed(
 const notebookAttachments = computed(() =>
   notebookNote.value ? attachmentsByNote.value[notebookNote.value.id] ?? [] : [],
 )
+const notebookReferencedAttachmentIds = computed(() =>
+  notebookForm.value.blocks
+    .filter((block): block is NoteFormImageBlock => block.type === 'image')
+    .map((block) => block.attachmentId)
+    .filter((attachmentId): attachmentId is string => Boolean(attachmentId)),
+)
+const referencedNotebookAttachments = computed(() => {
+  const referencedIds = new Set(notebookReferencedAttachmentIds.value)
+
+  return notebookAttachments.value.filter((attachment) =>
+    referencedIds.has(attachment.id),
+  )
+})
 const areAttachmentsLoading = computed(() =>
   notebookNote.value
     ? attachmentLoadingState.value[notebookNote.value.id] ?? false
@@ -408,25 +421,25 @@ const showCategoryNotFound = computed(
 )
 
 const attachmentsInAnalysis = computed(() =>
-  notebookAttachments.value.filter(
+  referencedNotebookAttachments.value.filter(
     (attachment) => attachment.processingStatus === 'processing',
   ),
 )
 
 const pendingAttachments = computed(() =>
-  notebookAttachments.value.filter(
+  referencedNotebookAttachments.value.filter(
     (attachment) => attachment.processingStatus === 'pending',
   ),
 )
 
 const failedAttachments = computed(() =>
-  notebookAttachments.value.filter(
+  referencedNotebookAttachments.value.filter(
     (attachment) => attachment.processingStatus === 'failed',
   ),
 )
 
 const noteAttachmentsNeedingAnalysis = computed(() =>
-  notebookAttachments.value.filter(
+  referencedNotebookAttachments.value.filter(
     (attachment) =>
       attachment.processingStatus === 'pending' ||
       attachment.processingStatus === 'failed',
@@ -1144,7 +1157,7 @@ const analyzeAttachmentSet = async (
   if (attachmentIds.length === 0) {
     noteAnalysisSummary.value = options.emptyMessage
     noteAnalysisModelLabel.value = formatAiModelLabels(
-      notebookAttachments.value.map((attachment) => attachment.analysisModel),
+      referencedNotebookAttachments.value.map((attachment) => attachment.analysisModel),
     )
     return
   }
@@ -1561,7 +1574,7 @@ const handleImportSelection = async (event: Event): Promise<void> => {
   input.value = ''
 }
 
-const undoLastChange = (): void => {
+const undoLastChange = async (): Promise<void> => {
   const snapshot = undoStack.value.pop()
 
   if (!snapshot) {
@@ -1569,6 +1582,7 @@ const undoLastChange = (): void => {
   }
 
   applyFormSnapshot(snapshot)
+  await nextTick()
 
   if (isDirty.value) {
     triggerAutosave()

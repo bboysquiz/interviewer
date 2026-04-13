@@ -47,9 +47,6 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
   const router = Router()
   const analyticsRepository = createAnalyticsRepository(db)
 
-  const buildListPlaceholders = (length: number): string =>
-    Array.from({ length }, () => '?').join(', ')
-
   const removeStoredFiles = (
     attachmentRows: Array<{ stored_file_name: string }>,
   ): void => {
@@ -341,25 +338,9 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       return
     }
 
-    const removedAttachmentRows = currentAttachmentRows.filter(
-      (attachment) => !referencedAttachmentIds.includes(attachment.id),
-    )
     const updatedAt = nowIso()
 
     const saveNoteTransaction = db.transaction(() => {
-      if (removedAttachmentRows.length > 0) {
-        const deleteRemovedAttachmentsStatement = db.prepare(
-          `
-            DELETE FROM attachments
-            WHERE id IN (${buildListPlaceholders(removedAttachmentRows.length)})
-          `,
-        )
-
-        deleteRemovedAttachmentsStatement.run(
-          ...removedAttachmentRows.map((attachment) => attachment.id),
-        )
-      }
-
       updateStatement.run(
         nextTitle,
         nextRawText,
@@ -377,7 +358,6 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     })
 
     saveNoteTransaction()
-    removeStoredFiles(removedAttachmentRows)
 
     response.json(getNoteById(noteId))
   })
