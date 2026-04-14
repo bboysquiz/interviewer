@@ -35,6 +35,9 @@ const OTHER_NOTE_LIMIT = 520
 const OTHER_NOTES_TOTAL_LIMIT = 7000
 const MAX_ATTACHMENT_DIGESTS_PER_NOTE = 5
 const MAX_OTHER_NOTES = 24
+const TARGET_ADD_TOPICS = 7
+const TARGET_DEEPEN_TOPICS = 3
+const MAX_SUGGESTION_ATTEMPTS = 3
 
 const normalizeWhitespace = (value: string | null | undefined): string =>
   (value ?? '').replace(/\s+/g, ' ').trim()
@@ -44,7 +47,7 @@ const truncate = (value: string, maxLength: number): string => {
     return value
   }
 
-  return `${value.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`
+  return `${value.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`
 }
 
 const normalizeTopicTitle = (value: string): string =>
@@ -166,6 +169,60 @@ const filterDuplicateSuggestions = (
   return result
 }
 
+const mergeUsage = (
+  left: SuggestNoteStudyTopicsResult['usage'],
+  right: SuggestNoteStudyTopicsResult['usage'],
+): SuggestNoteStudyTopicsResult['usage'] => {
+  const sum = (
+    first: number | null | undefined,
+    second: number | null | undefined,
+  ): number => (first ?? 0) + (second ?? 0)
+
+  if (!left && !right) {
+    return null
+  }
+
+  return {
+    inputTokens: sum(left?.inputTokens, right?.inputTokens),
+    outputTokens: sum(left?.outputTokens, right?.outputTokens),
+    totalTokens: sum(left?.totalTokens, right?.totalTokens),
+  }
+}
+
+const appendUniqueSuggestions = (
+  current: NoteStudySuggestionItem[],
+  incoming: NoteStudySuggestionItem[],
+  blockedTitles: Set<string>,
+  maxItems: number,
+): NoteStudySuggestionItem[] => {
+  if (current.length >= maxItems) {
+    return current
+  }
+
+  const next = [...current]
+  const seenTitles = new Set([
+    ...blockedTitles,
+    ...current.map((suggestion) => normalizeTopicTitle(suggestion.title)),
+  ])
+
+  for (const suggestion of incoming) {
+    const normalizedTitle = normalizeTopicTitle(suggestion.title)
+
+    if (!normalizedTitle || seenTitles.has(normalizedTitle)) {
+      continue
+    }
+
+    next.push(suggestion)
+    seenTitles.add(normalizedTitle)
+
+    if (next.length >= maxItems) {
+      break
+    }
+  }
+
+  return next
+}
+
 export const buildStudyTopicSuggestions = async (
   input: BuildStudyTopicSuggestionsInput,
 ): Promise<SuggestNoteStudyTopicsResult> => {
@@ -179,7 +236,11 @@ export const buildStudyTopicSuggestions = async (
   }
 
   const excludedTopicTitles = [
-    ...new Set((input.excludedTopicTitles ?? []).map((title) => title.trim()).filter(Boolean)),
+    ...new Set(
+      (input.excludedTopicTitles ?? [])
+        .map((title) => title.trim())
+        .filter(Boolean),
+    ),
   ]
 
   const targetNoteDigest = buildTargetNoteDigest(targetNote)
@@ -194,20 +255,64 @@ export const buildStudyTopicSuggestions = async (
     )
   }
 
-  const result = await suggestNoteStudyTopics({
-    targetCategoryName: targetNote.categoryName,
-    targetNoteTitle: targetNote.noteTitle,
-    targetNoteDigest,
-    otherNotesDigest: buildOtherNotesDigest(input.notes, input.targetNoteId),
-    excludedTopicTitles,
-  })
-
-  const filteredSuggestions = filterDuplicateSuggestions(
-    result.suggestions,
-    excludedTopicTitles,
+  const blockedTitles = new Set(
+    excludedTopicTitles.map((title) => normalizeTopicTitle(title)),
   )
+  const otherNotesDigest = buildOtherNotesDigest(input.notes, input.targetNoteId)
+  let topicsToAdd: NoteStudySuggestionItem[] = []
+  let topicsToDeepen: NoteStudySuggestionItem[] = []
+  let model = ''
+  let requestId: string | null = null
+  let usage: SuggestNoteStudyTopicsResult['usage'] = null
 
-  if (filteredSuggestions.length === 0) {
+  for (let attempt = 0; attempt < MAX_SUGGESTION_ATTEMPTS; attempt += 1) {
+    const dynamicExcludedTopicTitles = [
+      ...excludedTopicTitles,
+      ...topicsToAdd.map((suggestion) => suggestion.title),
+      ...topicsToDeepen.map((suggestion) => suggestion.title),
+    ]
+
+    const result = await suggestNoteStudyTopics({
+      targetCategoryName: targetNote.categoryName,
+      targetNoteTitle: targetNote.noteTitle,
+      targetNoteDigest,
+      otherNotesDigest,
+      excludedTopicTitles: dynamicExcludedTopicTitles,
+    })
+
+    model = result.model
+    requestId = result.requestId
+    usage = mergeUsage(usage, result.usage)
+
+    const filteredSuggestions = filterDuplicateSuggestions(
+      result.suggestions,
+      dynamicExcludedTopicTitles,
+    )
+
+    topicsToAdd = appendUniqueSuggestions(
+      topicsToAdd,
+      filteredSuggestions.filter((suggestion) => suggestion.kind === 'add'),
+      blockedTitles,
+      TARGET_ADD_TOPICS,
+    )
+    topicsToDeepen = appendUniqueSuggestions(
+      topicsToDeepen,
+      filteredSuggestions.filter((suggestion) => suggestion.kind === 'deepen'),
+      blockedTitles,
+      TARGET_DEEPEN_TOPICS,
+    )
+
+    if (
+      topicsToAdd.length >= TARGET_ADD_TOPICS &&
+      topicsToDeepen.length >= TARGET_DEEPEN_TOPICS
+    ) {
+      break
+    }
+  }
+
+  const suggestions = [...topicsToAdd, ...topicsToDeepen]
+
+  if (suggestions.length === 0) {
     throw new AiServiceError(
       'Не удалось подобрать новые темы без повторов в рамках этой сессии. Попробуй ещё раз позже.',
       {
@@ -218,7 +323,9 @@ export const buildStudyTopicSuggestions = async (
   }
 
   return {
-    ...result,
-    suggestions: filteredSuggestions,
+    model,
+    requestId,
+    usage,
+    suggestions,
   }
 }

@@ -459,7 +459,8 @@ export const buildNoteStudySuggestionsSystemPrompt = (): string =>
     'Do not use topics_to_deepen for minor inaccuracies, wording issues, or tiny improvements.',
     'Do not suggest topics that are already meaningfully covered in other notes of the knowledge base.',
     'If a topic belongs better to another existing note, do not suggest moving it into the target note.',
-    'Avoid repeated titles and avoid titles listed in excludedTopicTitles.',
+    'Avoid repeated titles and never reuse titles listed in excludedTopicTitles.',
+    'If many excluded titles are provided, pivot to adjacent but still relevant topics instead of repeating them.',
     'Prefer concrete technical themes over vague advice.',
     'Return only strict JSON.',
   ].join('\n')
