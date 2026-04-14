@@ -33,9 +33,9 @@ import {
   buildInterviewQuestionSystemPrompt,
   buildInterviewQuestionUserPrompt,
   buildNoteOrganizationResult,
+  buildNoteStudySuggestionsResultFromItems,
   buildNoteOrganizationSystemPrompt,
   buildNoteOrganizationUserPrompt,
-  buildNoteStudySuggestionsResult,
   buildNoteStudySuggestionsSystemPrompt,
   buildNoteStudySuggestionsUserPrompt,
   buildQuestionResult,
@@ -44,7 +44,7 @@ import {
   imageAnalysisSchema,
   interviewEvaluationSchema,
   interviewQuestionSchema,
-  noteStudySuggestionsSchema,
+  parseNoteStudySuggestionsFromText,
   parseStructuredRecord,
 } from '../common.js'
 import { AiServiceError } from '../errors.js'
@@ -915,26 +915,24 @@ const suggestNoteStudyTopics = async (
       },
     ],
     generationConfig: {
-      responseMimeType: 'application/json',
-      responseJsonSchema: noteStudySuggestionsSchema,
-      maxOutputTokens: 2600,
+      maxOutputTokens: 1500,
     },
   })
   const rawOutput = extractResponseText(
     response,
-    'Gemini returned an empty structured response for study topic suggestions.',
+    'Gemini returned an empty response for study topic suggestions.',
   )
-  const record = parseStructuredRecord(
+  const suggestions = parseNoteStudySuggestionsFromText(
     rawOutput,
-    'Gemini returned invalid JSON for study topic suggestions.',
+    'Gemini returned an unreadable response for study topic suggestions.',
   )
   const model = formatProviderModel(
     'gemini',
     response.modelVersion ?? GEMINI_INTERVIEW_QUESTION_MODEL,
   )
 
-  return buildNoteStudySuggestionsResult(
-    record,
+  return buildNoteStudySuggestionsResultFromItems(
+    suggestions,
     model,
     response.responseId ?? null,
     buildGeminiUsage(response),

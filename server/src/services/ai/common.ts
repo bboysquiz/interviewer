@@ -453,16 +453,21 @@ export const buildNoteStudySuggestionsSystemPrompt = (): string =>
   [
     'You recommend study topics for one target note inside a personal technical knowledge base.',
     'Return all natural-language fields in Russian.',
-    'You must suggest exactly 10 topics total:',
-    '- 7 topics_to_add items: important themes that should be added to the target note.',
-    '- 3 topics_to_deepen items: themes that already exist in the target note but have major gaps, shallow coverage, or serious missing depth.',
-    'Do not use topics_to_deepen for minor inaccuracies, wording issues, or tiny improvements.',
+    'You must suggest exactly 10 topics total: 7 ADD items and 3 DEEPEN items.',
+    'ADD means an important topic that should be added to the target note.',
+    'DEEPEN means a topic that already exists in the target note but has major missing depth or large coverage gaps.',
+    'Do not use DEEPEN for minor inaccuracies or tiny improvements.',
     'Do not suggest topics that are already meaningfully covered in other notes of the knowledge base.',
     'If a topic belongs better to another existing note, do not suggest moving it into the target note.',
     'Avoid repeated titles and never reuse titles listed in excludedTopicTitles.',
-    'If many excluded titles are provided, pivot to adjacent but still relevant topics instead of repeating them.',
     'Prefer concrete technical themes over vague advice.',
-    'Return only strict JSON.',
+    'Return plain text only.',
+    'Output exactly one topic per line using this format:',
+    'ADD | <title> | <what it is> | <why suggested now> | <recommended focus>',
+    'DEEPEN | <title> | <what it is> | <why suggested now> | <recommended focus>',
+    'Do not number the lines.',
+    'Do not use the "|" character inside the fields.',
+    'Do not add markdown, JSON, bullets, explanations, or prose before or after the 10 lines.',
   ].join('\n')
 
 export const buildNoteStudySuggestionsUserPrompt = (
@@ -480,11 +485,12 @@ export const buildNoteStudySuggestionsUserPrompt = (
     input.otherNotesDigest || 'No other notes available.',
     [
       'Important rules:',
-      '- suggest 7 topics_to_add items and 3 topics_to_deepen items',
-      '- topics_to_add must be absent from the target note and not already covered elsewhere',
-      '- topics_to_deepen must already be present in the target note but require major deepening',
+      '- return exactly 7 ADD lines and 3 DEEPEN lines',
+      '- ADD topics must be absent from the target note and not already covered elsewhere',
+      '- DEEPEN topics must already be present in the target note and require major deepening',
       '- if another note already covers a topic, do not suggest it here',
       '- do not repeat excludedTopicTitles',
+      '- keep titles concise and distinct',
     ].join('\n'),
   ]
     .filter(Boolean)
@@ -516,6 +522,9 @@ export const normalizeStringArray = (
     ),
   ].slice(0, maxItems)
 }
+
+const normalizeTopicTitle = (value: string): string =>
+  value.toLocaleLowerCase('ru').replace(/\s+/g, ' ').trim()
 
 const containsCyrillic = (value: string): boolean => /[А-Яа-яЁё]/.test(value)
 
@@ -718,6 +727,76 @@ const normalizeStudySuggestionItems = (
   return items
 }
 
+export const parseNoteStudySuggestionsFromText = (
+  rawText: string,
+  errorMessage: string,
+): NoteStudySuggestionItem[] => {
+  const candidate = extractJsonObjectCandidate(rawText)
+  const lines = candidate
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) {
+    throw new AiServiceError(errorMessage, {
+      status: 502,
+      code: 'ai_invalid_response',
+    })
+  }
+
+  const suggestions: NoteStudySuggestionItem[] = []
+  const seenTitles = new Set<string>()
+
+  for (const originalLine of lines) {
+    const line = originalLine.replace(/^\d+[\).\s-]+/, '').trim()
+    const parts = line.split('|').map((part) => part.trim())
+
+    if (parts.length < 5) {
+      continue
+    }
+
+    const rawKind = parts[0]?.toUpperCase()
+    const title = parts[1] ?? ''
+    const whatItIs = parts[2] ?? ''
+    const whySuggested = parts[3] ?? ''
+    const recommendedFocus = parts.slice(4).join(' | ')
+
+    if (
+      (rawKind !== 'ADD' && rawKind !== 'DEEPEN') ||
+      !title ||
+      !whatItIs ||
+      !whySuggested ||
+      !recommendedFocus
+    ) {
+      continue
+    }
+
+    const normalizedTitle = normalizeTopicTitle(title)
+
+    if (!normalizedTitle || seenTitles.has(normalizedTitle)) {
+      continue
+    }
+
+    seenTitles.add(normalizedTitle)
+    suggestions.push({
+      title: title.slice(0, 120),
+      kind: rawKind === 'ADD' ? 'add' : 'deepen',
+      whatItIs,
+      whySuggested,
+      recommendedFocus,
+    })
+  }
+
+  if (suggestions.length === 0) {
+    throw new AiServiceError(errorMessage, {
+      status: 502,
+      code: 'ai_invalid_response',
+    })
+  }
+
+  return suggestions
+}
+
 const normalizeOrganizedSections = (
   value: unknown,
 ): OrganizedNoteSection[] => {
@@ -861,6 +940,18 @@ export const buildNoteStudySuggestionsResult = (
     ...normalizeStudySuggestionItems(record.topics_to_add, 'add', 7),
     ...normalizeStudySuggestionItems(record.topics_to_deepen, 'deepen', 3),
   ],
+  model,
+  requestId,
+  usage,
+})
+
+export const buildNoteStudySuggestionsResultFromItems = (
+  suggestions: NoteStudySuggestionItem[],
+  model: string,
+  requestId: string | null,
+  usage: SuggestNoteStudyTopicsResult['usage'],
+): SuggestNoteStudyTopicsResult => ({
+  suggestions,
   model,
   requestId,
   usage,

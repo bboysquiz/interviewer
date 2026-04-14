@@ -36,6 +36,8 @@ const providers: Record<AiProviderName, AiProvider> = {
   groq: groqProvider,
 }
 
+const STUDY_TOPIC_PROVIDER_ORDER: AiProviderName[] = ['groq', 'gemini']
+
 const providerCooldowns = new Map<string, number>()
 
 const DEFAULT_TEMPORARY_PROVIDER_COOLDOWN_MS = 30_000
@@ -286,6 +288,23 @@ const isRetryableAiError = (error: unknown): boolean => {
   )
 }
 
+const isRetryableAiErrorForTask = (task: AiTask, error: unknown): boolean => {
+  if (isRetryableAiError(error)) {
+    return true
+  }
+
+  if (
+    task === 'note_study_topic_suggestions' &&
+    error instanceof AiServiceError &&
+    (error.code === 'ai_invalid_response' ||
+      error.code === 'ai_validation_error')
+  ) {
+    return true
+  }
+
+  return false
+}
+
 const formatFallbackReason = (error: unknown): string => {
   if (!(error instanceof AiServiceError)) {
     return error instanceof Error ? error.message : 'Unknown error'
@@ -312,7 +331,11 @@ const formatFallbackReason = (error: unknown): string => {
 }
 
 const getProvidersForTask = (task: AiTask): AiProvider[] => {
-  const orderedNames = uniqueProviders([AI_PRIMARY_PROVIDER, AI_FALLBACK_PROVIDER])
+  const orderedNames = uniqueProviders(
+    task === 'note_study_topic_suggestions'
+      ? [...STUDY_TOPIC_PROVIDER_ORDER, AI_PRIMARY_PROVIDER, AI_FALLBACK_PROVIDER]
+      : [AI_PRIMARY_PROVIDER, AI_FALLBACK_PROVIDER],
+  )
   const eligibleProviders = orderedNames
     .map((providerName) => providers[providerName])
     .filter((provider) => provider.isConfigured)
@@ -405,7 +428,7 @@ const withProviderFallback = async <T>(
 
       const hasNextProvider = index < taskProviders.length - 1
 
-      if (!hasNextProvider || !isRetryableAiError(error)) {
+      if (!hasNextProvider || !isRetryableAiErrorForTask(task, error)) {
         console.warn(
           `AI provider "${provider.name}" failed for ${task} with no further fallback. ${formatFallbackReason(error)}`,
         )

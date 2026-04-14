@@ -29,14 +29,15 @@ import {
   buildInterviewQuestionSystemPrompt,
   buildInterviewQuestionUserPrompt,
   buildNoteOrganizationResult,
+  buildNoteStudySuggestionsResultFromItems,
   buildNoteOrganizationSystemPrompt,
   buildNoteOrganizationUserPrompt,
-  buildNoteStudySuggestionsResult,
   buildNoteStudySuggestionsSystemPrompt,
   buildNoteStudySuggestionsUserPrompt,
   buildQuestionResult,
   buildUsage,
   formatProviderModel,
+  parseNoteStudySuggestionsFromText,
   parseStructuredRecord,
 } from '../common.js'
 import { AiServiceError, toAiServiceError } from '../errors.js'
@@ -523,17 +524,14 @@ const suggestNoteStudyTopics = async (
           content: buildNoteStudySuggestionsUserPrompt(input),
         },
       ],
-      response_format: {
-        type: 'json_object',
-      },
-      max_completion_tokens: 2200,
+      max_completion_tokens: 1500,
     })
 
     const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
 
     if (!rawOutput) {
       throw new AiServiceError(
-        'Groq returned an empty structured response for study topic suggestions.',
+        'Groq returned an empty response for study topic suggestions.',
         {
           status: 502,
           code: 'ai_invalid_response',
@@ -541,13 +539,13 @@ const suggestNoteStudyTopics = async (
       )
     }
 
-    const record = parseStructuredRecord(
+    const suggestions = parseNoteStudySuggestionsFromText(
       rawOutput,
-      'Groq returned invalid JSON for study topic suggestions.',
+      'Groq returned an unreadable response for study topic suggestions.',
     )
 
-    return buildNoteStudySuggestionsResult(
-      record,
+    return buildNoteStudySuggestionsResultFromItems(
+      suggestions,
       formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
       completion.id ?? null,
       buildGroqUsage(completion.usage),

@@ -24,6 +24,10 @@ import {
   type NoteFormImageBlock,
   type NoteFormValues,
 } from '@/features/notes/noteForm'
+import {
+  createNotebookExportArtifact,
+  deliverNotebookExportArtifact,
+} from '@/features/notes/appleNotesExport'
 import type { NoteStudySuggestion } from '@/services/client/knowledgeBaseApi'
 import { formatDateTime } from '@/shared/lib/format'
 import AppNotice from '@/shared/ui/AppNotice.vue'
@@ -394,6 +398,8 @@ const pendingImportSummary = ref<string | null>(null)
 const noteAnalysisError = ref<string | null>(null)
 const noteAnalysisSummary = ref<string | null>(null)
 const noteAnalysisModelLabel = ref<string | null>(null)
+const exportError = ref<string | null>(null)
+const exportSummary = ref<string | null>(null)
 const studyTopicsError = ref<string | null>(null)
 const studyTopicsModelLabel = ref<string | null>(null)
 const studyTopicSuggestions = ref<NoteStudySuggestionUiItem[]>([])
@@ -415,6 +421,7 @@ const activeNoteSearchMatchIndex = ref(0)
 const isSaving = ref(false)
 const isImporting = ref(false)
 const isAnalyzingNote = ref(false)
+const isExportingNote = ref(false)
 const isSuggestingStudyTopics = ref(false)
 const organizationModeInFlight = ref<'ai' | 'local' | null>(null)
 const importFolderInput = ref<HTMLInputElement | null>(null)
@@ -1435,6 +1442,58 @@ const requestStudyTopics = async (): Promise<void> => {
   }
 }
 
+const exportNotebookToAppleNotes = async (): Promise<void> => {
+  if (
+    showCategoryNotFound.value ||
+    isSaving.value ||
+    isImporting.value ||
+    isOrganizing.value ||
+    isAnalyzingNote.value ||
+    isExportingNote.value
+  ) {
+    return
+  }
+
+  exportError.value = null
+  exportSummary.value = null
+
+  if (!hasMeaningfulNotebookContent.value) {
+    exportError.value =
+      'Сначала добавь в заметку текст или скриншоты, чтобы было что экспортировать.'
+    return
+  }
+
+  isExportingNote.value = true
+
+  try {
+    const artifact = await createNotebookExportArtifact({
+      title: buildNotebookTitle(),
+      blocks: notebookForm.value.blocks,
+      attachmentsById: attachmentsById.value,
+    })
+    const deliveryResult = await deliverNotebookExportArtifact(artifact)
+
+    if (deliveryResult.kind === 'shared') {
+      exportSummary.value =
+        'Экспорт подготовлен. В открывшемся меню “Поделиться” выбери приложение “Заметки”.'
+      return
+    }
+
+    if (deliveryResult.kind === 'downloaded') {
+      exportSummary.value =
+        'Экспорт сохранён как HTML-файл. Открой его на iPhone и отправь в “Заметки” через меню “Поделиться”.'
+      return
+    }
+  } catch (error) {
+    exportError.value =
+      error instanceof Error
+        ? error.message
+        : 'Не удалось подготовить экспорт заметки для Apple Notes.'
+  } finally {
+    isExportingNote.value = false
+  }
+}
+
 const retryFailedAnalyses = async (): Promise<void> => {
   const attachmentsToRetry = failedAttachments.value.map((attachment) => attachment.id)
 
@@ -2209,6 +2268,42 @@ onBeforeUnmount(() => {
       </button>
 
       <button
+        class="app-button app-button--secondary category-notes-page__export-button"
+        type="button"
+        :disabled="
+          isImporting ||
+          isSaving ||
+          isOrganizing ||
+          isAnalyzingNote ||
+          isExportingNote ||
+          !hasMeaningfulNotebookContent
+        "
+        @click="void exportNotebookToAppleNotes()"
+      >
+        {{
+          isExportingNote
+            ? 'Готовим экспорт...'
+            : 'Экспорт в Apple Notes'
+        }}
+      </button>
+
+      <AppNotice
+        v-if="exportSummary"
+        tone="success"
+        title="Экспорт готов"
+        :message="exportSummary"
+        compact
+      />
+
+      <AppNotice
+        v-if="exportError"
+        tone="error"
+        title="Экспорт не завершился"
+        :message="exportError"
+        compact
+      />
+
+      <button
         class="app-button app-button--secondary category-notes-page__import-button"
         type="button"
         :disabled="isImporting || isSaving || isOrganizing || isAnalyzingNote"
@@ -2604,6 +2699,7 @@ onBeforeUnmount(() => {
 .category-notes-page__analysis-button,
 .category-notes-page__study-topics-button,
 .category-notes-page__organize-button,
+.category-notes-page__export-button,
 .category-notes-page__import-button {
   align-self: flex-start;
 }
