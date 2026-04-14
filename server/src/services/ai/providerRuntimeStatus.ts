@@ -7,6 +7,7 @@ type AiTask =
   | 'interview_question_generation'
   | 'interview_answer_evaluation'
   | 'note_organization'
+  | 'note_study_topic_suggestions'
 
 export type AiRuntimeChannel = 'text' | 'image'
 export type AiRuntimeState =

@@ -17,6 +17,7 @@ export type AiAnalyticsTask =
   | 'interview_question_generation'
   | 'interview_answer_evaluation'
   | 'note_organization'
+  | 'note_study_topic_suggestions'
 
 export type AiAnalyticsChannel = 'text' | 'image'
 
@@ -118,6 +119,7 @@ export interface AiAnalyticsSnapshot {
 const TASK_ORDER: AiAnalyticsTask[] = [
   'interview_question_generation',
   'interview_answer_evaluation',
+  'note_study_topic_suggestions',
   'note_organization',
   'image_analysis',
 ]

@@ -8,9 +8,12 @@ import type {
   EvaluateInterviewCriterionResult,
   GenerateInterviewQuestionInput,
   InterviewQuestionDifficulty,
+  NoteStudySuggestionItem,
   OrganizeKnowledgeBaseNoteInput,
   OrganizeKnowledgeBaseNoteResult,
   OrganizedNoteSection,
+  SuggestNoteStudyTopicsInput,
+  SuggestNoteStudyTopicsResult,
 } from './dto.js'
 import { AiServiceError } from './errors.js'
 
@@ -199,6 +202,75 @@ export const noteOrganizationSchema = {
   },
 } as const
 
+export const noteStudySuggestionsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['topics_to_add', 'topics_to_deepen'],
+  properties: {
+    topics_to_add: {
+      type: 'array',
+      minItems: 7,
+      maxItems: 7,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'what_it_is', 'why_suggested', 'recommended_focus'],
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Short Russian topic title to add to the target note.',
+          },
+          what_it_is: {
+            type: 'string',
+            description: 'Short explanation of what this topic is.',
+          },
+          why_suggested: {
+            type: 'string',
+            description:
+              'Why the topic should be added specifically to the target note.',
+          },
+          recommended_focus: {
+            type: 'string',
+            description:
+              'What exactly the user should add or learn inside this topic.',
+          },
+        },
+      },
+    },
+    topics_to_deepen: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'what_it_is', 'why_suggested', 'recommended_focus'],
+        properties: {
+          title: {
+            type: 'string',
+            description:
+              'Short Russian topic title that already exists in the target note and needs deeper coverage.',
+          },
+          what_it_is: {
+            type: 'string',
+            description: 'Short explanation of what this topic is.',
+          },
+          why_suggested: {
+            type: 'string',
+            description:
+              'Why the current coverage has major gaps and should be deepened.',
+          },
+          recommended_focus: {
+            type: 'string',
+            description:
+              'What exactly should be improved or expanded in this topic.',
+          },
+        },
+      },
+    },
+  },
+} as const
+
 export const buildImageAnalysisPrompt = (
   input: AnalyzeImageForKnowledgeBaseInput,
 ): string =>
@@ -377,6 +449,46 @@ export const buildNoteOrganizationUserPrompt = (
     .filter(Boolean)
     .join('\n\n')
 
+export const buildNoteStudySuggestionsSystemPrompt = (): string =>
+  [
+    'You recommend study topics for one target note inside a personal technical knowledge base.',
+    'Return all natural-language fields in Russian.',
+    'You must suggest exactly 10 topics total:',
+    '- 7 topics_to_add items: important themes that should be added to the target note.',
+    '- 3 topics_to_deepen items: themes that already exist in the target note but have major gaps, shallow coverage, or serious missing depth.',
+    'Do not use topics_to_deepen for minor inaccuracies, wording issues, or tiny improvements.',
+    'Do not suggest topics that are already meaningfully covered in other notes of the knowledge base.',
+    'If a topic belongs better to another existing note, do not suggest moving it into the target note.',
+    'Avoid repeated titles and avoid titles listed in excludedTopicTitles.',
+    'Prefer concrete technical themes over vague advice.',
+    'Return only strict JSON.',
+  ].join('\n')
+
+export const buildNoteStudySuggestionsUserPrompt = (
+  input: SuggestNoteStudyTopicsInput,
+): string =>
+  [
+    input.targetCategoryName ? `Target category: ${input.targetCategoryName}` : null,
+    input.targetNoteTitle ? `Target note title: ${input.targetNoteTitle}` : null,
+    input.excludedTopicTitles.length > 0
+      ? `excludedTopicTitles:\n- ${input.excludedTopicTitles.join('\n- ')}`
+      : 'excludedTopicTitles: none',
+    'Target note coverage summary:',
+    input.targetNoteDigest,
+    'Other notes already covered elsewhere in the knowledge base:',
+    input.otherNotesDigest || 'No other notes available.',
+    [
+      'Important rules:',
+      '- suggest 7 topics_to_add items and 3 topics_to_deepen items',
+      '- topics_to_add must be absent from the target note and not already covered elsewhere',
+      '- topics_to_deepen must already be present in the target note but require major deepening',
+      '- if another note already covers a topic, do not suggest it here',
+      '- do not repeat excludedTopicTitles',
+    ].join('\n'),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
 export const normalizeOptionalString = (value: unknown): string | null => {
   if (typeof value !== 'string') {
     return null
@@ -538,6 +650,73 @@ const normalizeSectionTitle = (value: unknown): string => {
   return normalized.slice(0, 80)
 }
 
+const normalizeStudySuggestionItem = (
+  value: unknown,
+  kind: NoteStudySuggestionItem['kind'],
+): NoteStudySuggestionItem | null => {
+  const record =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+
+  if (!record) {
+    return null
+  }
+
+  const title = coerceString(record.title).trim()
+  const whatItIs = coerceString(record.what_it_is).trim()
+  const whySuggested = coerceString(record.why_suggested).trim()
+  const recommendedFocus = coerceString(record.recommended_focus).trim()
+
+  if (!title || !whatItIs || !whySuggested || !recommendedFocus) {
+    return null
+  }
+
+  return {
+    title: title.slice(0, 120),
+    kind,
+    whatItIs,
+    whySuggested,
+    recommendedFocus,
+  }
+}
+
+const normalizeStudySuggestionItems = (
+  value: unknown,
+  kind: NoteStudySuggestionItem['kind'],
+  maxItems: number,
+): NoteStudySuggestionItem[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seenTitles = new Set<string>()
+  const items: NoteStudySuggestionItem[] = []
+
+  for (const entry of value) {
+    const suggestion = normalizeStudySuggestionItem(entry, kind)
+
+    if (!suggestion) {
+      continue
+    }
+
+    const normalizedTitle = suggestion.title.toLocaleLowerCase('ru').trim()
+
+    if (!normalizedTitle || seenTitles.has(normalizedTitle)) {
+      continue
+    }
+
+    seenTitles.add(normalizedTitle)
+    items.push(suggestion)
+
+    if (items.length >= maxItems) {
+      break
+    }
+  }
+
+  return items
+}
+
 const normalizeOrganizedSections = (
   value: unknown,
 ): OrganizedNoteSection[] => {
@@ -666,6 +845,21 @@ export const buildNoteOrganizationResult = (
   usage: OrganizeKnowledgeBaseNoteResult['usage'],
 ): OrganizeKnowledgeBaseNoteResult => ({
   sections: normalizeOrganizedSections(record.sections),
+  model,
+  requestId,
+  usage,
+})
+
+export const buildNoteStudySuggestionsResult = (
+  record: Record<string, unknown>,
+  model: string,
+  requestId: string | null,
+  usage: SuggestNoteStudyTopicsResult['usage'],
+): SuggestNoteStudyTopicsResult => ({
+  suggestions: [
+    ...normalizeStudySuggestionItems(record.topics_to_add, 'add', 7),
+    ...normalizeStudySuggestionItems(record.topics_to_deepen, 'deepen', 3),
+  ],
   model,
   requestId,
   usage,

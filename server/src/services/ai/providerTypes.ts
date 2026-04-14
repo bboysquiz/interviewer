@@ -7,6 +7,8 @@ import type {
   GenerateInterviewQuestionResult,
   OrganizeKnowledgeBaseNoteInput,
   OrganizeKnowledgeBaseNoteResult,
+  SuggestNoteStudyTopicsInput,
+  SuggestNoteStudyTopicsResult,
 } from './dto.js'
 
 export type AiProviderName = 'gemini' | 'groq'
@@ -27,4 +29,7 @@ export interface AiProvider {
   organizeKnowledgeBaseNote: (
     input: OrganizeKnowledgeBaseNoteInput,
   ) => Promise<OrganizeKnowledgeBaseNoteResult>
+  suggestNoteStudyTopics: (
+    input: SuggestNoteStudyTopicsInput,
+  ) => Promise<SuggestNoteStudyTopicsResult>
 }

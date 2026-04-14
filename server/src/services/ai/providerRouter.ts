@@ -12,6 +12,8 @@ import type {
   GenerateInterviewQuestionResult,
   OrganizeKnowledgeBaseNoteInput,
   OrganizeKnowledgeBaseNoteResult,
+  SuggestNoteStudyTopicsInput,
+  SuggestNoteStudyTopicsResult,
 } from './dto.js'
 import { AiServiceError } from './errors.js'
 import { geminiProvider } from './providers/geminiProvider.js'
@@ -27,6 +29,7 @@ type AiTask =
   | 'interview_question_generation'
   | 'interview_answer_evaluation'
   | 'note_organization'
+  | 'note_study_topic_suggestions'
 
 const providers: Record<AiProviderName, AiProvider> = {
   gemini: geminiProvider,
@@ -453,4 +456,11 @@ export const organizeKnowledgeBaseNote = async (
 ): Promise<OrganizeKnowledgeBaseNoteResult> =>
   withProviderFallback('note_organization', (provider) =>
     provider.organizeKnowledgeBaseNote(input),
+  )
+
+export const suggestNoteStudyTopics = async (
+  input: SuggestNoteStudyTopicsInput,
+): Promise<SuggestNoteStudyTopicsResult> =>
+  withProviderFallback('note_study_topic_suggestions', (provider) =>
+    provider.suggestNoteStudyTopics(input),
   )

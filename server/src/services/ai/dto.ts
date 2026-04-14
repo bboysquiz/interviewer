@@ -94,6 +94,26 @@ export interface OrganizeKnowledgeBaseNoteResult extends AiExecutionDto {
   sections: OrganizedNoteSection[]
 }
 
+export interface SuggestNoteStudyTopicsInput {
+  targetCategoryName?: string | null
+  targetNoteTitle?: string | null
+  targetNoteDigest: string
+  otherNotesDigest: string
+  excludedTopicTitles: string[]
+}
+
+export interface NoteStudySuggestionItem {
+  title: string
+  kind: 'add' | 'deepen'
+  whatItIs: string
+  whySuggested: string
+  recommendedFocus: string
+}
+
+export interface SuggestNoteStudyTopicsResult extends AiExecutionDto {
+  suggestions: NoteStudySuggestionItem[]
+}
+
 export interface GenerateInterviewQuestionRequestDto {
   sourceType: AiInterviewSourceType
   categoryId?: string | null

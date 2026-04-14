@@ -24,6 +24,7 @@ import {
   type NoteFormImageBlock,
   type NoteFormValues,
 } from '@/features/notes/noteForm'
+import type { NoteStudySuggestion } from '@/services/client/knowledgeBaseApi'
 import { formatDateTime } from '@/shared/lib/format'
 import AppNotice from '@/shared/ui/AppNotice.vue'
 import SurfaceCard from '@/shared/ui/SurfaceCard.vue'
@@ -75,8 +76,13 @@ interface LocalSectionDraft {
   isEditing: boolean
 }
 
+interface NoteStudySuggestionUiItem extends NoteStudySuggestion {
+  key: string
+}
+
 const AUTOSAVE_DELAY_MS = 2000
 const MAX_UNDO_STEPS = 40
+const STUDY_SUGGESTIONS_SESSION_KEY_PREFIX = 'study-topic-suggestions'
 
 const normalizeProcessingError = (
   value: string | null,
@@ -388,6 +394,10 @@ const pendingImportSummary = ref<string | null>(null)
 const noteAnalysisError = ref<string | null>(null)
 const noteAnalysisSummary = ref<string | null>(null)
 const noteAnalysisModelLabel = ref<string | null>(null)
+const studyTopicsError = ref<string | null>(null)
+const studyTopicsModelLabel = ref<string | null>(null)
+const studyTopicSuggestions = ref<NoteStudySuggestionUiItem[]>([])
+const expandedStudyTopicKeys = ref<string[]>([])
 const aiOrganizeError = ref<string | null>(null)
 const aiOrganizeSummary = ref<string | null>(null)
 const aiOrganizeModelLabel = ref<string | null>(null)
@@ -405,6 +415,7 @@ const activeNoteSearchMatchIndex = ref(0)
 const isSaving = ref(false)
 const isImporting = ref(false)
 const isAnalyzingNote = ref(false)
+const isSuggestingStudyTopics = ref(false)
 const organizationModeInFlight = ref<'ai' | 'local' | null>(null)
 const importFolderInput = ref<HTMLInputElement | null>(null)
 const undoStack = ref<NoteFormValues[]>([])
@@ -419,6 +430,57 @@ let autosaveHandle: ReturnType<typeof setTimeout> | null = null
 const showCategoryNotFound = computed(
   () => hasLoaded.value && !category.value && !isLoading.value,
 )
+
+const isOrganizationFeaturePaused = true
+
+const studySuggestionsSessionKey = computed(
+  () => `${STUDY_SUGGESTIONS_SESSION_KEY_PREFIX}:${categoryId.value}`,
+)
+
+const readSeenStudyTopicTitles = (): string[] => {
+  if (typeof window === 'undefined' || !studySuggestionsSessionKey.value) {
+    return []
+  }
+
+  try {
+    const rawValue = window.sessionStorage.getItem(studySuggestionsSessionKey.value)
+
+    if (!rawValue) {
+      return []
+    }
+
+    const parsed = JSON.parse(rawValue) as unknown
+
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+const writeSeenStudyTopicTitles = (titles: string[]): void => {
+  if (typeof window === 'undefined' || !studySuggestionsSessionKey.value) {
+    return
+  }
+
+  window.sessionStorage.setItem(
+    studySuggestionsSessionKey.value,
+    JSON.stringify([...new Set(titles.map((title) => title.trim()).filter(Boolean))]),
+  )
+}
+
+const appendSeenStudyTopicTitles = (titles: string[]): void => {
+  writeSeenStudyTopicTitles([...readSeenStudyTopicTitles(), ...titles])
+}
+
+const buildStudySuggestionKey = (suggestion: NoteStudySuggestion): string =>
+  `${suggestion.kind}:${suggestion.title.trim().toLocaleLowerCase('ru')}`
 
 const attachmentsInAnalysis = computed(() =>
   referencedNotebookAttachments.value.filter(
@@ -524,6 +586,25 @@ const organizeBlockedReason = computed(() => {
 
   return `Сначала проанализируй все скриншоты темы. Сейчас без AI-анализа ещё ${count} ${pluralizeScreenshots(count)}.`
 })
+
+const organizationPausedMessage =
+  'Сортировку конспекта временно отключили, пока дорабатываем качество раскладки.'
+
+const hasStudyTopicSuggestions = computed(
+  () => studyTopicSuggestions.value.length > 0,
+)
+
+const studyTopicAddCount = computed(
+  () =>
+    studyTopicSuggestions.value.filter((suggestion) => suggestion.kind === 'add')
+      .length,
+)
+
+const studyTopicDeepenCount = computed(
+  () =>
+    studyTopicSuggestions.value.filter((suggestion) => suggestion.kind === 'deepen')
+      .length,
+)
 
 const normalizedNoteSearchQuery = computed(() =>
   normalizeSearchValue(noteSearchQuery.value),
@@ -855,6 +936,10 @@ const clearNoteSearch = (): void => {
 }
 
 const openLocalSectionsModal = (): void => {
+  if (isOrganizationFeaturePaused) {
+    return
+  }
+
   isLocalSectionsModalOpen.value = true
 
   if (localSectionDrafts.value.length === 0) {
@@ -1278,6 +1363,78 @@ const analyzeNotebook = async (): Promise<void> => {
   )
 }
 
+const mapStudyTopicSuggestionsForUi = (
+  suggestions: NoteStudySuggestion[],
+): NoteStudySuggestionUiItem[] =>
+  suggestions.map((suggestion) => ({
+    ...suggestion,
+    key: buildStudySuggestionKey(suggestion),
+  }))
+
+const toggleStudyTopicSuggestion = (key: string): void => {
+  expandedStudyTopicKeys.value = expandedStudyTopicKeys.value.includes(key)
+    ? expandedStudyTopicKeys.value.filter((currentKey) => currentKey !== key)
+    : [...expandedStudyTopicKeys.value, key]
+}
+
+const requestStudyTopics = async (): Promise<void> => {
+  if (
+    showCategoryNotFound.value ||
+    isSaving.value ||
+    isImporting.value ||
+    isOrganizing.value ||
+    isAnalyzingNote.value ||
+    isSuggestingStudyTopics.value
+  ) {
+    return
+  }
+
+  studyTopicsError.value = null
+
+  if (!hasMeaningfulNotebookContent.value) {
+    studyTopicsError.value =
+      'Сначала добавь в заметку текст или скриншоты, чтобы ИИ смог предложить следующие темы для изучения.'
+    return
+  }
+
+  if (isDirty.value || !notebookNote.value) {
+    await saveNotebook()
+
+    if (saveError.value || !notebookNote.value) {
+      return
+    }
+  }
+
+  isSuggestingStudyTopics.value = true
+
+  try {
+    const response = await notesStore.suggestStudyTopics(notebookNote.value.id, {
+      excludedTopicTitles: readSeenStudyTopicTitles(),
+    })
+    const nextSuggestions = mapStudyTopicSuggestionsForUi(response.suggestions)
+
+    if (nextSuggestions.length === 0) {
+      studyTopicsError.value =
+        'Сейчас не удалось подобрать новый список тем без повторов. Попробуй ещё раз чуть позже.'
+      return
+    }
+
+    studyTopicSuggestions.value = nextSuggestions
+    studyTopicsModelLabel.value = formatAiModelLabel(response.ai.model)
+    expandedStudyTopicKeys.value = []
+    appendSeenStudyTopicTitles(
+      nextSuggestions.map((suggestion) => suggestion.title),
+    )
+  } catch (error) {
+    studyTopicsError.value =
+      error instanceof Error
+        ? error.message
+        : 'Не удалось получить рекомендации по новым темам.'
+  } finally {
+    isSuggestingStudyTopics.value = false
+  }
+}
+
 const retryFailedAnalyses = async (): Promise<void> => {
   const attachmentsToRetry = failedAttachments.value.map((attachment) => attachment.id)
 
@@ -1429,6 +1586,11 @@ const importAppleNotesFiles = async (files: File[]): Promise<void> => {
 }
 
 const organizeNotebook = async (): Promise<void> => {
+  if (isOrganizationFeaturePaused) {
+    organizeError.value = organizationPausedMessage
+    return
+  }
+
   if (
     showCategoryNotFound.value ||
     isSaving.value ||
@@ -1509,6 +1671,11 @@ const prepareNotebookForOrganization = async (): Promise<boolean> => {
 }
 
 const organizeNotebookLocally = async (): Promise<void> => {
+  if (isOrganizationFeaturePaused) {
+    localOrganizeError.value = organizationPausedMessage
+    return
+  }
+
   if (
     showCategoryNotFound.value ||
     isSaving.value ||
@@ -1603,6 +1770,10 @@ watch(
     noteAnalysisError.value = null
     noteAnalysisSummary.value = null
     noteAnalysisModelLabel.value = null
+    studyTopicsError.value = null
+    studyTopicsModelLabel.value = null
+    studyTopicSuggestions.value = []
+    expandedStudyTopicKeys.value = []
     clearOrganizationMessages()
     hydrateFormFromNotebook(null)
     void loadNotebook()
@@ -1644,6 +1815,7 @@ watch(
     noteAnalysisError.value = null
     noteAnalysisSummary.value = null
     noteAnalysisModelLabel.value = null
+    studyTopicsError.value = null
     clearOrganizationMessages()
     undoStack.value.push(cloneNoteFormValues(previousSnapshot.value))
 
@@ -1851,27 +2023,143 @@ onBeforeUnmount(() => {
           isAnalyzingNote
             ? 'Анализируем заметку...'
             : 'Анализировать заметку нейросетью'
-        }}
+          }}
       </button>
 
-      <p
-        v-if="organizeBlockedReason"
-        class="category-notes-page__organize-hint"
-      >
-        {{ organizeBlockedReason }}
-      </p>
-
       <button
-        class="app-button app-button--secondary category-notes-page__organize-button"
+        class="app-button app-button--secondary category-notes-page__study-topics-button"
         type="button"
         :disabled="
           isImporting ||
           isSaving ||
           isOrganizing ||
           isAnalyzingNote ||
-          !hasMeaningfulNotebookContent ||
-          hasScreenshotBlocksWithoutAnalysis
+          isSuggestingStudyTopics ||
+          !hasMeaningfulNotebookContent
         "
+        @click="void requestStudyTopics()"
+      >
+        {{
+          isSuggestingStudyTopics
+            ? 'Подбираем темы...'
+            : 'Предложить темы для изучения с помощью ИИ'
+        }}
+      </button>
+
+      <button
+        class="app-button app-button--secondary category-notes-page__study-topics-button"
+        type="button"
+        :disabled="
+          isImporting ||
+          isSaving ||
+          isOrganizing ||
+          isAnalyzingNote ||
+          isSuggestingStudyTopics ||
+          !hasMeaningfulNotebookContent ||
+          !hasStudyTopicSuggestions
+        "
+        @click="void requestStudyTopics()"
+      >
+        Предложить другие темы
+      </button>
+
+      <div
+        v-if="hasStudyTopicSuggestions"
+        class="category-notes-page__study-topics"
+      >
+        <div class="category-notes-page__study-topics-header">
+          <div class="category-notes-page__study-topics-copy">
+            <p class="category-notes-page__study-topics-title">
+              ИИ предложил темы для следующего шага
+            </p>
+            <p class="category-notes-page__study-topics-subtitle">
+              {{ studyTopicAddCount }} на добавление и {{ studyTopicDeepenCount }} на углубление
+            </p>
+          </div>
+
+          <p
+            v-if="studyTopicsModelLabel"
+            class="category-notes-page__study-topics-model"
+          >
+            {{ studyTopicsModelLabel }}
+          </p>
+        </div>
+
+        <div class="category-notes-page__study-topics-list">
+          <article
+            v-for="suggestion in studyTopicSuggestions"
+            :key="suggestion.key"
+            class="category-notes-page__study-topic-card"
+          >
+            <button
+              class="category-notes-page__study-topic-trigger"
+              type="button"
+              @click="toggleStudyTopicSuggestion(suggestion.key)"
+            >
+              <span
+                class="category-notes-page__study-topic-kind"
+                :class="{
+                  'category-notes-page__study-topic-kind--deepen':
+                    suggestion.kind === 'deepen',
+                }"
+              >
+                {{ suggestion.kind === 'deepen' ? 'Углубить' : 'Добавить' }}
+              </span>
+
+              <span class="category-notes-page__study-topic-title">
+                {{ suggestion.title }}
+              </span>
+
+              <span class="category-notes-page__study-topic-toggle">
+                {{
+                  expandedStudyTopicKeys.includes(suggestion.key)
+                    ? 'Свернуть'
+                    : 'Открыть'
+                }}
+              </span>
+            </button>
+
+            <div
+              v-if="expandedStudyTopicKeys.includes(suggestion.key)"
+              class="category-notes-page__study-topic-content"
+            >
+              <p class="category-notes-page__study-topic-section">
+                <strong>Что это:</strong> {{ suggestion.whatItIs }}
+              </p>
+              <p class="category-notes-page__study-topic-section">
+                <strong>Почему именно сейчас:</strong> {{ suggestion.whySuggested }}
+              </p>
+              <p class="category-notes-page__study-topic-section">
+                <strong>{{
+                  suggestion.kind === 'deepen'
+                    ? 'Что углубить:'
+                    : 'Что добавить:'
+                }}</strong>
+                {{ suggestion.recommendedFocus }}
+              </p>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <AppNotice
+        v-if="studyTopicsError"
+        tone="error"
+        title="ИИ не смог предложить новые темы"
+        :message="studyTopicsError"
+      />
+
+      <p
+        v-if="isOrganizationFeaturePaused || organizeBlockedReason"
+        class="category-notes-page__organize-hint"
+      >
+        {{ isOrganizationFeaturePaused ? organizationPausedMessage : organizeBlockedReason }}
+      </p>
+
+      <button
+        class="app-button app-button--secondary category-notes-page__organize-button"
+        type="button"
+        :disabled="true"
         @click="void organizeNotebook()"
       >
         {{
@@ -1882,7 +2170,7 @@ onBeforeUnmount(() => {
       <button
         class="app-button app-button--secondary category-notes-page__organize-button"
         type="button"
-        :disabled="isImporting || isSaving || isOrganizing || isAnalyzingNote"
+        :disabled="true"
         @click="openLocalSectionsModal()"
       >
         Указать разделы для локальной сортировки
@@ -1910,14 +2198,7 @@ onBeforeUnmount(() => {
       <button
         class="app-button app-button--secondary category-notes-page__organize-button"
         type="button"
-        :disabled="
-          isImporting ||
-          isSaving ||
-          isOrganizing ||
-          isAnalyzingNote ||
-          !hasMeaningfulNotebookContent ||
-          savedLocalSectionTitles.length === 0
-        "
+        :disabled="true"
         @click="void organizeNotebookLocally()"
       >
         {{
@@ -2321,9 +2602,129 @@ onBeforeUnmount(() => {
 }
 
 .category-notes-page__analysis-button,
+.category-notes-page__study-topics-button,
 .category-notes-page__organize-button,
 .category-notes-page__import-button {
   align-self: flex-start;
+}
+
+.category-notes-page__study-topics {
+  width: min(100%, 46rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid rgba(180, 154, 123, 0.24);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.category-notes-page__study-topics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.category-notes-page__study-topics-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.category-notes-page__study-topics-title,
+.category-notes-page__study-topics-subtitle,
+.category-notes-page__study-topics-model {
+  margin: 0;
+}
+
+.category-notes-page__study-topics-title {
+  color: var(--text);
+  font-size: 0.96rem;
+  font-weight: 800;
+}
+
+.category-notes-page__study-topics-subtitle,
+.category-notes-page__study-topics-model {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.category-notes-page__study-topics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.category-notes-page__study-topic-card {
+  border: 1px solid rgba(180, 154, 123, 0.2);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+}
+
+.category-notes-page__study-topic-trigger {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.category-notes-page__study-topic-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.95rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(31, 109, 90, 0.12);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.category-notes-page__study-topic-kind--deepen {
+  background: rgba(207, 116, 64, 0.14);
+  color: #a0522d;
+}
+
+.category-notes-page__study-topic-title {
+  color: var(--text);
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.category-notes-page__study-topic-toggle {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.category-notes-page__study-topic-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0 1rem 1rem;
+}
+
+.category-notes-page__study-topic-section {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.category-notes-page__study-topic-section strong {
+  color: var(--text);
 }
 
 .category-notes-page__local-sections-summary {

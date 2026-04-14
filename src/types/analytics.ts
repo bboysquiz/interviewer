@@ -3,6 +3,7 @@ export type AiAnalyticsTask =
   | 'interview_question_generation'
   | 'interview_answer_evaluation'
   | 'note_organization'
+  | 'note_study_topic_suggestions'
 
 export type AiAnalyticsChannel = 'text' | 'image'
 
@@ -56,6 +57,7 @@ export interface AiAnalyticsFriendlyBudget {
     | 'answer_evaluation'
     | 'image_analysis'
     | 'note_organization'
+    | 'note_study_topic_suggestions'
   channel: AiAnalyticsChannel
   used24h: number
   limit24h: number | null

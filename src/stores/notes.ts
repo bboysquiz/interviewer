@@ -6,6 +6,8 @@ import {
   type CreateNoteInput,
   type OrganizeNoteInput,
   type OrganizeNoteResponse,
+  type SuggestStudyTopicsInput,
+  type SuggestStudyTopicsResponse,
   type UpdateNoteInput,
 } from '@/services/client/knowledgeBaseApi'
 import type { Note } from '@/types'
@@ -167,6 +169,12 @@ export const useNotesStore = defineStore('notes', () => {
     return response
   }
 
+  const suggestStudyTopics = async (
+    noteId: string,
+    input: SuggestStudyTopicsInput = {},
+  ): Promise<SuggestStudyTopicsResponse> =>
+    knowledgeBaseApi.suggestStudyTopics(noteId, input)
+
   const deleteNote = async (noteId: string): Promise<void> => {
     const existingNote = notesById.value[noteId]
     await knowledgeBaseApi.deleteNote(noteId)
@@ -186,6 +194,7 @@ export const useNotesStore = defineStore('notes', () => {
     createNote,
     updateNote,
     organizeNote,
+    suggestStudyTopics,
     deleteNote,
   }
 })

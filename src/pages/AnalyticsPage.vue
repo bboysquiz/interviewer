@@ -67,6 +67,7 @@ const taskLabels = {
   interview_answer_evaluation: 'Проверки ответов',
   image_analysis: 'Анализы скриншотов',
   note_organization: 'AI-сортировки конспекта',
+  note_study_topic_suggestions: 'AI-РїРѕРґСЃРєР°Р·РєРё РЅРѕРІС‹С… С‚РµРј',
 } as const
 
 const budgetMetaById = {
@@ -85,6 +86,11 @@ const budgetMetaById = {
   note_organization: {
     title: 'Упорядочивание конспекта',
     detail: 'Запас по текстовым вызовам для AI-сортировки заметки.',
+  },
+  note_study_topic_suggestions: {
+    title: 'AI-РїРѕРґСЃРєР°Р·РєРё С‚РµРј',
+    detail:
+      'Р—Р°РїР°СЃ РїРѕ С‚РµРєСЃС‚РѕРІС‹Рј РІС‹Р·РѕРІР°Рј РґР»СЏ РїРѕРґР±РѕСЂР° РЅРѕРІС‹С… С‚РµРј Рё СѓРіР»СѓР±Р»РµРЅРёР№.',
   },
 } as const
 

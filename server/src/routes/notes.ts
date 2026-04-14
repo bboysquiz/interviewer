@@ -18,6 +18,7 @@ import { coerceString, createId, nowIso } from '../lib/text.js'
 import { createAnalyticsRepository } from '../services/analyticsRepository.js'
 import { AiServiceError } from '../services/ai/errors.js'
 import { reorganizeNoteContent } from '../services/noteOrganization.js'
+import { buildStudyTopicSuggestions } from '../services/noteStudySuggestions.js'
 
 interface NoteRow {
   id: string
@@ -27,6 +28,18 @@ interface NoteRow {
   content_json: string | null
   created_at: string
   updated_at: string
+}
+
+interface NoteKnowledgeRow extends NoteRow {
+  category_name: string | null
+}
+
+interface NoteKnowledgeAttachmentRow {
+  note_id: string
+  original_file_name: string | null
+  extracted_text: string | null
+  image_description: string | null
+  key_terms_json: string | null
 }
 
 const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
@@ -88,6 +101,34 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         image_description
       FROM attachments
       WHERE note_id = ?
+      ORDER BY created_at ASC
+    `,
+  )
+  const allNotesWithCategoryStatement = db.prepare(
+    `
+      SELECT
+        notes.id,
+        notes.category_id,
+        notes.title,
+        notes.content,
+        notes.content_json,
+        notes.created_at,
+        notes.updated_at,
+        categories.name AS category_name
+      FROM notes
+      LEFT JOIN categories ON categories.id = notes.category_id
+      ORDER BY notes.updated_at DESC, notes.created_at DESC
+    `,
+  )
+  const allKnowledgeAttachmentsStatement = db.prepare(
+    `
+      SELECT
+        note_id,
+        original_file_name,
+        extracted_text,
+        image_description,
+        key_terms_json
+      FROM attachments
       ORDER BY created_at ASC
     `,
   )
@@ -494,6 +535,104 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
           error instanceof Error
             ? error.message
             : 'AI note organization failed.',
+      })
+    }
+  })
+
+  router.post('/:id/study-topics', async (request, response) => {
+    const noteId = request.params.id
+    const existing = byIdStatement.get(noteId) as NoteRow | undefined
+
+    if (!existing) {
+      response.status(404).json({
+        message: `Note "${noteId}" was not found.`,
+      })
+      return
+    }
+
+    const body = (request.body ?? {}) as Record<string, unknown>
+    const excludedTopicTitles = Array.isArray(body.excludedTopicTitles)
+      ? body.excludedTopicTitles
+          .map((value) => coerceString(value))
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .slice(0, 200)
+      : []
+
+    try {
+      const notes = allNotesWithCategoryStatement.all() as NoteKnowledgeRow[]
+      const attachmentRows = allKnowledgeAttachmentsStatement.all() as NoteKnowledgeAttachmentRow[]
+      const attachmentsByNoteId = new Map<string, NoteKnowledgeAttachmentRow[]>()
+
+      for (const attachment of attachmentRows) {
+        const existingRows = attachmentsByNoteId.get(attachment.note_id) ?? []
+        existingRows.push(attachment)
+        attachmentsByNoteId.set(attachment.note_id, existingRows)
+      }
+
+      const suggested = await buildStudyTopicSuggestions({
+        targetNoteId: noteId,
+        excludedTopicTitles,
+        notes: notes.map((note) => ({
+          noteId: note.id,
+          categoryId: note.category_id,
+          categoryName: note.category_name,
+          noteTitle: note.title,
+          rawText: note.content,
+          attachments:
+            attachmentsByNoteId.get(note.id)?.map((attachment) => ({
+              originalFileName: attachment.original_file_name,
+              extractedText: attachment.extracted_text,
+              imageDescription: attachment.image_description,
+              keyTermsJson: attachment.key_terms_json,
+            })) ?? [],
+        })),
+      })
+      const updatedAt = nowIso()
+
+      analyticsRepository.recordAiUsageEvent({
+        task: 'note_study_topic_suggestions',
+        provider: parseProviderFromModel(suggested.model),
+        model: suggested.model,
+        requestId: suggested.requestId,
+        categoryId: existing.category_id,
+        noteId,
+        inputTokens: suggested.usage?.inputTokens ?? null,
+        outputTokens: suggested.usage?.outputTokens ?? null,
+        totalTokens: suggested.usage?.totalTokens ?? null,
+        occurredAt: updatedAt,
+      })
+
+      response.json({
+        suggestions: suggested.suggestions,
+        ai: {
+          model: suggested.model,
+          requestId: suggested.requestId,
+          usage: suggested.usage,
+        },
+      })
+    } catch (error) {
+      if (error instanceof AiServiceError) {
+        const safeStatus =
+          error.status >= 500
+            ? error.code === 'ai_invalid_response'
+              ? 422
+              : 424
+            : error.status
+
+        response.status(safeStatus).json({
+          message: error.message,
+          code: error.code,
+          ...(error.details !== undefined ? { details: error.details } : {}),
+        })
+        return
+      }
+
+      response.status(500).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : 'AI study topic suggestion failed.',
       })
     }
   })

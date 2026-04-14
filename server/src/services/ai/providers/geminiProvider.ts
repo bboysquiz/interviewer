@@ -21,6 +21,8 @@ import type {
   GenerateInterviewQuestionResult,
   OrganizeKnowledgeBaseNoteInput,
   OrganizeKnowledgeBaseNoteResult,
+  SuggestNoteStudyTopicsInput,
+  SuggestNoteStudyTopicsResult,
 } from '../dto.js'
 import {
   buildEvaluationResult,
@@ -33,12 +35,16 @@ import {
   buildNoteOrganizationResult,
   buildNoteOrganizationSystemPrompt,
   buildNoteOrganizationUserPrompt,
+  buildNoteStudySuggestionsResult,
+  buildNoteStudySuggestionsSystemPrompt,
+  buildNoteStudySuggestionsUserPrompt,
   buildQuestionResult,
   buildUsage,
   formatProviderModel,
   imageAnalysisSchema,
   interviewEvaluationSchema,
   interviewQuestionSchema,
+  noteStudySuggestionsSchema,
   parseStructuredRecord,
 } from '../common.js'
 import { AiServiceError } from '../errors.js'
@@ -877,6 +883,64 @@ const organizeKnowledgeBaseNote = async (
   )
 }
 
+const suggestNoteStudyTopics = async (
+  input: SuggestNoteStudyTopicsInput,
+): Promise<SuggestNoteStudyTopicsResult> => {
+  if (!input.targetNoteDigest.trim()) {
+    throw new AiServiceError(
+      'Target note digest is required for study topic suggestions.',
+      {
+        status: 400,
+        code: 'ai_validation_error',
+      },
+    )
+  }
+
+  const response = await callGemini(GEMINI_INTERVIEW_QUESTION_MODEL, {
+    systemInstruction: {
+      parts: [
+        {
+          text: buildNoteStudySuggestionsSystemPrompt(),
+        },
+      ],
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: buildNoteStudySuggestionsUserPrompt(input),
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseJsonSchema: noteStudySuggestionsSchema,
+      maxOutputTokens: 2600,
+    },
+  })
+  const rawOutput = extractResponseText(
+    response,
+    'Gemini returned an empty structured response for study topic suggestions.',
+  )
+  const record = parseStructuredRecord(
+    rawOutput,
+    'Gemini returned invalid JSON for study topic suggestions.',
+  )
+  const model = formatProviderModel(
+    'gemini',
+    response.modelVersion ?? GEMINI_INTERVIEW_QUESTION_MODEL,
+  )
+
+  return buildNoteStudySuggestionsResult(
+    record,
+    model,
+    response.responseId ?? null,
+    buildGeminiUsage(response),
+  )
+}
+
 export const geminiProvider: AiProvider = {
   name: 'gemini',
   get isConfigured() {
@@ -887,4 +951,5 @@ export const geminiProvider: AiProvider = {
   generateInterviewQuestion,
   evaluateInterviewAnswer,
   organizeKnowledgeBaseNote,
+  suggestNoteStudyTopics,
 }

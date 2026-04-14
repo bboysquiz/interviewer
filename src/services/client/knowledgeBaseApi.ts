@@ -70,6 +70,31 @@ export interface OrganizeNoteInput {
   sectionTitles?: string[]
 }
 
+export interface SuggestStudyTopicsInput {
+  excludedTopicTitles?: string[]
+}
+
+export interface NoteStudySuggestion {
+  title: string
+  kind: 'add' | 'deepen'
+  whatItIs: string
+  whySuggested: string
+  recommendedFocus: string
+}
+
+export interface SuggestStudyTopicsResponse {
+  suggestions: NoteStudySuggestion[]
+  ai: {
+    model: string
+    requestId: string | null
+    usage: {
+      inputTokens: number | null
+      outputTokens: number | null
+      totalTokens: number | null
+    } | null
+  }
+}
+
 export interface UpdateAttachmentProcessingInput {
   extractedText?: string | null
   imageDescription?: string | null
@@ -165,6 +190,18 @@ export const knowledgeBaseApi = {
       method: 'POST',
       body: JSON.stringify(input),
     }),
+
+  suggestStudyTopics: (
+    noteId: string,
+    input: SuggestStudyTopicsInput = {},
+  ) =>
+    requestJson<SuggestStudyTopicsResponse>(
+      `${API_PATHS.notes}/${noteId}/study-topics`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    ),
 
   deleteNote: (noteId: string) =>
     requestJson<void>(`${API_PATHS.notes}/${noteId}`, {

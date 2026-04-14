@@ -17,6 +17,8 @@ import type {
   OrganizeKnowledgeBaseNoteInput,
   OrganizeKnowledgeBaseNoteResult,
   OrganizedNoteSection,
+  SuggestNoteStudyTopicsInput,
+  SuggestNoteStudyTopicsResult,
 } from '../dto.js'
 import {
   buildEvaluationResult,
@@ -29,6 +31,9 @@ import {
   buildNoteOrganizationResult,
   buildNoteOrganizationSystemPrompt,
   buildNoteOrganizationUserPrompt,
+  buildNoteStudySuggestionsResult,
+  buildNoteStudySuggestionsSystemPrompt,
+  buildNoteStudySuggestionsUserPrompt,
   buildQuestionResult,
   buildUsage,
   formatProviderModel,
@@ -491,6 +496,67 @@ const organizeKnowledgeBaseNote = async (
   }
 }
 
+const suggestNoteStudyTopics = async (
+  input: SuggestNoteStudyTopicsInput,
+): Promise<SuggestNoteStudyTopicsResult> => {
+  if (!input.targetNoteDigest.trim()) {
+    throw new AiServiceError(
+      'Target note digest is required for study topic suggestions.',
+      {
+        status: 400,
+        code: 'ai_validation_error',
+      },
+    )
+  }
+
+  try {
+    const client = getGroqClient()
+    const completion = await client.chat.completions.create({
+      model: GROQ_INTERVIEW_QUESTION_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: buildNoteStudySuggestionsSystemPrompt(),
+        },
+        {
+          role: 'user',
+          content: buildNoteStudySuggestionsUserPrompt(input),
+        },
+      ],
+      response_format: {
+        type: 'json_object',
+      },
+      max_completion_tokens: 2200,
+    })
+
+    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
+
+    if (!rawOutput) {
+      throw new AiServiceError(
+        'Groq returned an empty structured response for study topic suggestions.',
+        {
+          status: 502,
+          code: 'ai_invalid_response',
+        },
+      )
+    }
+
+    const record = parseStructuredRecord(
+      rawOutput,
+      'Groq returned invalid JSON for study topic suggestions.',
+    )
+
+    return buildNoteStudySuggestionsResult(
+      record,
+      formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+      completion.id ?? null,
+      buildGroqUsage(completion.usage),
+    )
+  } catch (error) {
+    throw toGroqAiServiceError(error, 'Groq study topic suggestion failed.')
+  }
+}
+
 export const groqProvider: AiProvider = {
   name: 'groq',
   get isConfigured() {
@@ -501,4 +567,5 @@ export const groqProvider: AiProvider = {
   generateInterviewQuestion,
   evaluateInterviewAnswer,
   organizeKnowledgeBaseNote,
+  suggestNoteStudyTopics,
 }
