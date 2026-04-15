@@ -1432,15 +1432,6 @@ onBeforeUnmount(() => {
               </select>
 
               <button
-                class="app-button app-button--secondary note-form__code-save"
-                type="button"
-                :disabled="isSubmitting"
-                @click="collapseCodeBlock(block.id)"
-              >
-                Сохранить код
-              </button>
-
-              <button
                 class="app-button app-button--secondary note-form__code-remove"
                 type="button"
                 :disabled="isSubmitting"
@@ -1483,6 +1474,16 @@ onBeforeUnmount(() => {
               @click="void expandCodeBlock(block.id)"
             >
               <pre class="note-form__code-preview-content">{{ block.code || 'Пустой блок кода' }}</pre>
+            </button>
+
+            <button
+                v-if="!isCodeBlockCollapsed(block.id)"
+                class="app-button app-button--secondary note-form__code-save"
+                type="button"
+                :disabled="isSubmitting"
+                @click="collapseCodeBlock(block.id)"
+              >
+                Сохранить код
             </button>
           </div>
 
