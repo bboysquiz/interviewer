@@ -680,4 +680,33 @@ onMounted(async () => {
     grid-column: 1 / -1;
   }
 }
+
+@media (min-width: 900px) {
+  .analytics-page__task-list,
+  .analytics-page__channel-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analytics-page__task-card,
+  .analytics-page__channel-card {
+    height: 100%;
+  }
+}
+
+@media (min-width: 1100px) {
+  .analytics-page__budget-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .analytics-page__budget-card:first-child {
+    grid-column: auto;
+  }
+}
+
+@media (min-width: 1480px) {
+  .analytics-page__budget-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
 </style>

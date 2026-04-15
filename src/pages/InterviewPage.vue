@@ -632,4 +632,57 @@ onBeforeUnmount(() => {
     flex: 0 0 7rem;
   }
 }
+
+@media (min-width: 1100px) {
+  .interview-page__section-grid,
+  .interview-page__session-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .interview-page__foundation-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .interview-page__section-card {
+    min-height: 11.5rem;
+    justify-content: space-between;
+  }
+
+  .interview-page__inline-field {
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .interview-page__inline-label {
+    flex: 0 0 8.5rem;
+  }
+
+  .interview-page__select {
+    max-width: 26rem;
+  }
+
+  .interview-page__actions {
+    align-items: center;
+  }
+
+  .interview-page__primary-action {
+    flex: 0 0 auto;
+    min-width: 16rem;
+  }
+
+  .interview-page__field {
+    gap: 0.9rem;
+  }
+
+  .interview-page__question {
+    max-width: 64rem;
+    font-size: 1.16rem;
+  }
+}
+
+@media (min-width: 1480px) {
+  .interview-page__foundation-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
 </style>

@@ -3083,5 +3083,56 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--text);
 }
+
+@media (min-width: 900px) {
+  .category-notes-page__search-meta {
+    align-items: flex-start;
+  }
+
+  .category-notes-page__study-topics-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .category-notes-page__study-topic-card {
+    height: 100%;
+  }
+}
+
+@media (min-width: 1100px) {
+  .category-notes-page__search {
+    gap: 0.8rem;
+    margin-bottom: 1.2rem;
+  }
+
+  .category-notes-page__search--sticky {
+    top: 1rem;
+    padding: 1rem;
+  }
+
+  .category-notes-page__search-bar {
+    align-items: stretch;
+  }
+
+  .category-notes-page__search-input {
+    min-height: 3.3rem;
+  }
+
+  .category-notes-page__analysis-button,
+  .category-notes-page__study-topics-button,
+  .category-notes-page__organize-button,
+  .category-notes-page__export-button,
+  .category-notes-page__import-button {
+    min-width: 18rem;
+  }
+
+  .category-notes-page__local-sections-summary {
+    width: min(100%, 52rem);
+  }
+
+  .category-notes-page__sections-modal-panel {
+    width: min(100%, 46rem);
+  }
+}
 </style>
 

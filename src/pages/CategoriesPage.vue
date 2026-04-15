@@ -390,4 +390,36 @@ const reloadCategories = async (): Promise<void> => {
     flex: 0 1 auto;
   }
 }
+
+@media (min-width: 1100px) {
+  .categories-page {
+    display: grid;
+    grid-template-columns: minmax(19rem, 24rem) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .categories-page > :deep(.surface-card) {
+    min-height: 100%;
+  }
+
+  .categories-page__list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .category-card {
+    height: 100%;
+  }
+
+  .category-card__actions {
+    margin-top: auto;
+  }
+}
+
+@media (min-width: 1480px) {
+  .categories-page__list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 </style>
