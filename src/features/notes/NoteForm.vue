@@ -1271,7 +1271,6 @@ onBeforeUnmount(() => {
               'note-form__editor--search-active': activeSearchBlockId === block.id,
             }"
             rows="1"
-            placeholder="Пиши здесь заметку. Скриншот можно вставить через Ctrl+V."
             @focus="rememberSelection(block.id, $event)"
             @click="rememberSelection(block.id, $event)"
             @keyup="rememberSelection(block.id, $event)"
@@ -1565,15 +1564,6 @@ onBeforeUnmount(() => {
   cursor: text;
 }
 
-.note-form__segment--insertion-point::before {
-  content: 'Нажми, чтобы вставить текст или картинку между блоками';
-  display: block;
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  line-height: 1.35;
-  pointer-events: none;
-}
-
 .note-form__code-card {
   display: flex;
   flex-direction: column;
@@ -1644,9 +1634,6 @@ onBeforeUnmount(() => {
 .note-form__editor--insertion-point {
   min-height: 3.4rem;
   padding: 0.72rem 0.86rem;
-  border: 1px dashed rgba(180, 154, 123, 0.46);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.48);
 }
 
 .note-form__editor--code {
