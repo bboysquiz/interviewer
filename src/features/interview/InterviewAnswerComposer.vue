@@ -656,6 +656,11 @@ onBeforeUnmount(() => {
   font: inherit;
 }
 
+.interview-answer-composer__code-language option {
+  background: #fffaf5;
+  color: #231c15;
+}
+
 .interview-answer-composer__editor--code {
   min-height: 12rem;
   border-color: rgba(255, 255, 255, 0.08);

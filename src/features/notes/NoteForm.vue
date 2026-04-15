@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   CODE_BLOCK_LANGUAGE_OPTIONS,
@@ -283,6 +283,9 @@ const createEditorBlocks = (blocks: NoteFormBlock[]): NoteFormBlock[] => {
   return withInsertionPoints
 }
 
+const createBlockStructureSignature = (blocks: NoteFormBlock[]): string =>
+  blocks.map((block) => `${block.id}:${block.type}`).join('|')
+
 const replaceBlocks = (blocks: NoteFormBlock[]): void => {
   form.value = {
     ...form.value,
@@ -417,6 +420,32 @@ const handleCodeInput = (blockId: string, event: Event): void => {
 const selectImageBlock = (blockId: string): void => {
   resetCanvasSelectAll()
   selectedImageBlockId.value = blockId
+}
+
+const canInsertAfterBlock = (blockIndex: number): boolean => {
+  const block = form.value.blocks[blockIndex]
+  const nextBlock = form.value.blocks[blockIndex + 1]
+
+  if (!block || block.type === 'text') {
+    return false
+  }
+
+  return Boolean(nextBlock && nextBlock.type !== 'text')
+}
+
+const insertTextBlockAfter = async (blockIndex: number): Promise<void> => {
+  const block = form.value.blocks[blockIndex]
+
+  if (!block) {
+    return
+  }
+
+  const nextBlocks = [...form.value.blocks]
+  const nextTextBlock = createTextBlock()
+
+  nextBlocks.splice(blockIndex + 1, 0, nextTextBlock)
+  replaceBlocks(nextBlocks)
+  await focusTextBlock(nextTextBlock.id, 0)
 }
 
 const clearCanvasContent = async (): Promise<void> => {
@@ -1094,7 +1123,25 @@ defineExpose({
   focusSearchTarget,
 })
 
-replaceBlocks(form.value.blocks)
+watch(
+  () => createBlockStructureSignature(form.value.blocks),
+  () => {
+    const normalizedBlocks = createEditorBlocks(form.value.blocks)
+
+    if (
+      createBlockStructureSignature(normalizedBlocks) ===
+      createBlockStructureSignature(form.value.blocks)
+    ) {
+      return
+    }
+
+    form.value = {
+      ...form.value,
+      blocks: normalizedBlocks,
+    }
+  },
+  { immediate: true },
+)
 
 onBeforeUnmount(() => {
   closeContextMenu()
@@ -1325,6 +1372,16 @@ onBeforeUnmount(() => {
               }}
             </div>
           </button>
+
+          <button
+            v-if="canInsertAfterBlock(index)"
+            class="note-form__insert-between"
+            type="button"
+            :disabled="isSubmitting"
+            @click="void insertTextBlockAfter(index)"
+          >
+            Нажми, чтобы вставить текст или картинку между блоками
+          </button>
         </article>
       </div>
 
@@ -1544,6 +1601,11 @@ onBeforeUnmount(() => {
   font: inherit;
 }
 
+.note-form__code-language option {
+  background: #fffaf5;
+  color: #231c15;
+}
+
 .note-form__code-remove {
   min-height: 2.45rem;
   padding-inline: 0.78rem;
@@ -1696,6 +1758,24 @@ onBeforeUnmount(() => {
   border-color: rgba(31, 109, 90, 0.38);
   box-shadow: 0 0 0 4px rgba(31, 109, 90, 0.12);
   background: rgba(245, 252, 249, 0.88);
+}
+
+.note-form__insert-between {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  min-height: 2.5rem;
+  margin-top: 0.38rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px dashed rgba(180, 154, 123, 0.56);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: center;
 }
 
 .note-form__image-wrap,
