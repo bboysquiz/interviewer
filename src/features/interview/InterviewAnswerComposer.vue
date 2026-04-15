@@ -2,6 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
+  getCodeAutocompleteResult,
+  type CodeAutocompleteResult,
+} from '@/features/editor/codeAutocomplete'
+import {
   CODE_BLOCK_LANGUAGE_OPTIONS,
   DEFAULT_CODE_BLOCK_LANGUAGE,
   normalizeEditorText,
@@ -44,6 +48,7 @@ const props = withDefaults(
 
 const textEditors = new Map<string, HTMLTextAreaElement>()
 const lastSelection = ref<AnswerSelectionSnapshot | null>(null)
+const collapsedCodeBlockIds = ref<string[]>([])
 const contextMenu = ref<ContextMenuState>({
   open: false,
   x: 0,
@@ -212,6 +217,34 @@ const replaceBlocks = (nextBlocks: TextAndCodeBlock[]): void => {
   blocks.value = normalizeBlocks(nextBlocks)
 }
 
+const isCodeBlockCollapsed = (blockId: string): boolean =>
+  collapsedCodeBlockIds.value.includes(blockId)
+
+const collapseCodeBlock = (blockId: string): void => {
+  if (collapsedCodeBlockIds.value.includes(blockId)) {
+    return
+  }
+
+  collapsedCodeBlockIds.value = [...collapsedCodeBlockIds.value, blockId]
+}
+
+const expandCodeBlock = async (blockId: string): Promise<void> => {
+  if (!collapsedCodeBlockIds.value.includes(blockId)) {
+    return
+  }
+
+  collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) => id !== blockId)
+  await nextTick()
+
+  const block = blocks.value[findBlockIndexById(blockId)]
+
+  if (block?.type !== 'code') {
+    return
+  }
+
+  await focusBlockSelection(blockId, block.code.length)
+}
+
 const createSelectionSnapshot = (
   blockId: string,
   editor: HTMLTextAreaElement,
@@ -252,6 +285,31 @@ const focusBlock = async (
     blockId,
     selectionStart: nextCaret,
     selectionEnd: nextCaret,
+  }
+}
+
+const focusBlockSelection = async (
+  blockId: string,
+  selectionStart: number,
+  selectionEnd = selectionStart,
+): Promise<void> => {
+  await nextTick()
+
+  const editor = textEditors.get(blockId)
+
+  if (!editor) {
+    return
+  }
+
+  syncTextEditorHeight(editor)
+  editor.focus()
+  const nextStart = Math.max(0, Math.min(selectionStart, editor.value.length))
+  const nextEnd = Math.max(nextStart, Math.min(selectionEnd, editor.value.length))
+  editor.setSelectionRange(nextStart, nextEnd)
+  lastSelection.value = {
+    blockId,
+    selectionStart: nextStart,
+    selectionEnd: nextEnd,
   }
 }
 
@@ -351,6 +409,8 @@ const removeCodeBlock = async (blockId: string): Promise<void> => {
     return
   }
 
+  collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) => id !== blockId)
+
   const previousBlock = blocks.value[blockIndex - 1]
   const nextBlock = blocks.value[blockIndex + 1]
   const nextBlocks = [...blocks.value]
@@ -375,6 +435,56 @@ const removeCodeBlock = async (blockId: string): Promise<void> => {
   if (fallbackTextBlock) {
     await focusBlock(fallbackTextBlock.id, fallbackTextBlock.text.length)
   }
+}
+
+const applyCodeAutocomplete = async (
+  blockId: string,
+  result: CodeAutocompleteResult,
+): Promise<void> => {
+  const blockIndex = findBlockIndexById(blockId)
+  const block = blocks.value[blockIndex]
+
+  if (!block || block.type !== 'code') {
+    return
+  }
+
+  const nextBlocks = [...blocks.value]
+  nextBlocks[blockIndex] = {
+    ...block,
+    code: result.value,
+  }
+  replaceBlocks(nextBlocks)
+  await focusBlockSelection(blockId, result.selectionStart, result.selectionEnd)
+}
+
+const handleCodeEditorKeydown = async (
+  blockId: string,
+  language: CodeBlockLanguage,
+  event: KeyboardEvent,
+): Promise<void> => {
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return
+  }
+
+  const result = getCodeAutocompleteResult({
+    key: event.key,
+    value: target.value,
+    selectionStart: target.selectionStart ?? 0,
+    selectionEnd: target.selectionEnd ?? target.selectionStart ?? 0,
+    language,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    altKey: event.altKey,
+  })
+
+  if (!result) {
+    return
+  }
+
+  event.preventDefault()
+  await applyCodeAutocomplete(blockId, result)
 }
 
 const handlePaste = async (
@@ -507,6 +617,17 @@ watch(
   },
 )
 
+watch(
+  () => blocks.value.map((block) => block.id),
+  (blockIds) => {
+    const activeIds = new Set(blockIds)
+    collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) =>
+      activeIds.has(id),
+    )
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   closeContextMenu()
   textEditors.clear()
@@ -540,8 +661,17 @@ onBeforeUnmount(() => {
         @contextmenu="void openDesktopContextMenu($event, block.id)"
       />
 
-      <div v-else class="interview-answer-composer__code-card">
-        <div class="interview-answer-composer__code-toolbar">
+      <div
+        v-else
+        class="interview-answer-composer__code-card"
+        :class="{
+          'interview-answer-composer__code-card--collapsed': isCodeBlockCollapsed(block.id),
+        }"
+      >
+        <div
+          v-if="!isCodeBlockCollapsed(block.id)"
+          class="interview-answer-composer__code-toolbar"
+        >
           <select
             v-model="block.language"
             class="interview-answer-composer__code-language"
@@ -557,6 +687,15 @@ onBeforeUnmount(() => {
           </select>
 
           <button
+            class="app-button app-button--secondary interview-answer-composer__code-save"
+            type="button"
+            :disabled="disabled"
+            @click="collapseCodeBlock(block.id)"
+          >
+            Сохранить код
+          </button>
+
+          <button
             class="app-button app-button--secondary interview-answer-composer__code-remove"
             type="button"
             :disabled="disabled"
@@ -567,6 +706,7 @@ onBeforeUnmount(() => {
         </div>
 
         <textarea
+          v-if="!isCodeBlockCollapsed(block.id)"
           v-model="block.code"
           :ref="(element) => registerTextEditor(block.id, element as Element | null)"
           class="interview-answer-composer__editor interview-answer-composer__editor--code"
@@ -578,10 +718,21 @@ onBeforeUnmount(() => {
           @click="rememberSelection(block.id, $event)"
           @keyup="rememberSelection(block.id, $event)"
           @select="rememberSelection(block.id, $event)"
+          @keydown="void handleCodeEditorKeydown(block.id, block.language, $event)"
           @input="rememberSelection(block.id, $event)"
           @paste="void handlePaste($event, block.id)"
           @contextmenu="void openDesktopContextMenu($event, block.id)"
         />
+
+        <button
+          v-else
+          class="interview-answer-composer__code-preview"
+          type="button"
+          :disabled="disabled"
+          @click="void expandCodeBlock(block.id)"
+        >
+          <pre class="interview-answer-composer__code-preview-content">{{ block.code || 'Пустой блок кода' }}</pre>
+        </button>
       </div>
     </article>
 
@@ -639,6 +790,11 @@ onBeforeUnmount(() => {
   background: rgba(30, 31, 37, 0.96);
 }
 
+.interview-answer-composer__code-card--collapsed {
+  padding: 0;
+  border-color: rgba(180, 154, 123, 0.16);
+}
+
 .interview-answer-composer__code-toolbar {
   display: flex;
   align-items: center;
@@ -682,8 +838,35 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgba(212, 183, 150, 0.12);
 }
 
+.interview-answer-composer__code-save,
 .interview-answer-composer__code-remove {
   min-height: 2.45rem;
   padding-inline: 0.78rem;
+}
+
+.interview-answer-composer__code-preview {
+  display: block;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-radius: 20px;
+  background: rgba(18, 19, 24, 0.92);
+  color: #f4f1eb;
+  text-align: left;
+  cursor: text;
+}
+
+.interview-answer-composer__code-preview-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family:
+    Consolas,
+    'SFMono-Regular',
+    'Cascadia Mono',
+    'Liberation Mono',
+    monospace;
+  font-size: 0.94rem;
+  line-height: 1.55;
 }
 </style>

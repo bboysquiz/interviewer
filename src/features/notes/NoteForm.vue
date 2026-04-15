@@ -2,6 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
+  getCodeAutocompleteResult,
+  type CodeAutocompleteResult,
+} from '@/features/editor/codeAutocomplete'
+import {
   CODE_BLOCK_LANGUAGE_OPTIONS,
   DEFAULT_CODE_BLOCK_LANGUAGE,
   normalizeEditorText,
@@ -110,6 +114,7 @@ const selectedImageBlockId = ref<string | null>(null)
 const isCanvasSelectAllActive = ref(false)
 const isClearConfirmOpen = ref(false)
 const pendingFileInsertSelection = ref<EditorSelectionSnapshot | null>(null)
+const collapsedCodeBlockIds = ref<string[]>([])
 const contextMenu = ref<ContextMenuState>({
   open: false,
   x: 0,
@@ -383,6 +388,35 @@ const focusTextBlock = async (
   scrollBlockIntoView(blockId)
 }
 
+const focusEditorSelection = async (
+  blockId: string,
+  selectionStart: number,
+  selectionEnd = selectionStart,
+): Promise<void> => {
+  await nextTick()
+
+  const editor = textEditors.get(blockId)
+
+  if (!editor) {
+    return
+  }
+
+  syncTextEditorHeight(editor)
+  editor.focus()
+  resetCanvasSelectAll()
+
+  const nextStart = Math.max(0, Math.min(selectionStart, editor.value.length))
+  const nextEnd = Math.max(nextStart, Math.min(selectionEnd, editor.value.length))
+  editor.setSelectionRange(nextStart, nextEnd)
+  lastSelection.value = {
+    blockId,
+    selectionStart: nextStart,
+    selectionEnd: nextEnd,
+  }
+  selectedImageBlockId.value = null
+  scrollBlockIntoView(blockId)
+}
+
 const rememberSelection = (blockId: string, event: Event): void => {
   const target = event.target
 
@@ -417,6 +451,56 @@ const handleCodeInput = (blockId: string, event: Event): void => {
   rememberSelection(blockId, event)
 }
 
+const applyCodeAutocomplete = async (
+  blockId: string,
+  result: CodeAutocompleteResult,
+): Promise<void> => {
+  const blockIndex = findBlockIndexById(blockId)
+  const block = form.value.blocks[blockIndex]
+
+  if (!block || block.type !== 'code') {
+    return
+  }
+
+  const nextBlocks = [...form.value.blocks]
+  nextBlocks[blockIndex] = {
+    ...block,
+    code: result.value,
+  }
+  replaceBlocks(nextBlocks)
+  await focusEditorSelection(blockId, result.selectionStart, result.selectionEnd)
+}
+
+const handleCodeEditorKeydown = async (
+  blockId: string,
+  language: CodeBlockLanguage,
+  event: KeyboardEvent,
+): Promise<void> => {
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return
+  }
+
+  const result = getCodeAutocompleteResult({
+    key: event.key,
+    value: target.value,
+    selectionStart: target.selectionStart ?? 0,
+    selectionEnd: target.selectionEnd ?? target.selectionStart ?? 0,
+    language,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    altKey: event.altKey,
+  })
+
+  if (!result) {
+    return
+  }
+
+  event.preventDefault()
+  await applyCodeAutocomplete(blockId, result)
+}
+
 const selectImageBlock = (blockId: string): void => {
   resetCanvasSelectAll()
   selectedImageBlockId.value = blockId
@@ -431,6 +515,34 @@ const canInsertAfterBlock = (blockIndex: number): boolean => {
   }
 
   return Boolean(nextBlock && nextBlock.type !== 'text')
+}
+
+const isCodeBlockCollapsed = (blockId: string): boolean =>
+  collapsedCodeBlockIds.value.includes(blockId)
+
+const collapseCodeBlock = (blockId: string): void => {
+  if (collapsedCodeBlockIds.value.includes(blockId)) {
+    return
+  }
+
+  collapsedCodeBlockIds.value = [...collapsedCodeBlockIds.value, blockId]
+}
+
+const expandCodeBlock = async (blockId: string): Promise<void> => {
+  if (!collapsedCodeBlockIds.value.includes(blockId)) {
+    return
+  }
+
+  collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) => id !== blockId)
+  await nextTick()
+
+  const block = form.value.blocks[findBlockIndexById(blockId)]
+
+  if (block?.type !== 'code') {
+    return
+  }
+
+  await focusEditorSelection(blockId, block.code.length)
 }
 
 const insertTextBlockAfter = async (blockIndex: number): Promise<void> => {
@@ -727,6 +839,8 @@ const removeCodeBlock = async (blockId: string): Promise<void> => {
   if (!block || block.type !== 'code') {
     return
   }
+
+  collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) => id !== blockId)
 
   const previousBlock = form.value.blocks[blockIndex - 1]
   const nextBlock = form.value.blocks[blockIndex + 1]
@@ -1143,6 +1257,17 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => form.value.blocks.map((block) => block.id),
+  (blockIds) => {
+    const activeIds = new Set(blockIds)
+    collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) =>
+      activeIds.has(id),
+    )
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   closeContextMenu()
 
@@ -1284,8 +1409,14 @@ onBeforeUnmount(() => {
           <div
             v-else-if="block.type === 'code'"
             class="note-form__code-card"
+            :class="{
+              'note-form__code-card--collapsed': isCodeBlockCollapsed(block.id),
+            }"
           >
-            <div class="note-form__code-toolbar">
+            <div
+              v-if="!isCodeBlockCollapsed(block.id)"
+              class="note-form__code-toolbar"
+            >
               <select
                 v-model="block.language"
                 class="note-form__code-language"
@@ -1301,6 +1432,15 @@ onBeforeUnmount(() => {
               </select>
 
               <button
+                class="app-button app-button--secondary note-form__code-save"
+                type="button"
+                :disabled="isSubmitting"
+                @click="collapseCodeBlock(block.id)"
+              >
+                Сохранить код
+              </button>
+
+              <button
                 class="app-button app-button--secondary note-form__code-remove"
                 type="button"
                 :disabled="isSubmitting"
@@ -1311,6 +1451,7 @@ onBeforeUnmount(() => {
             </div>
 
             <textarea
+              v-if="!isCodeBlockCollapsed(block.id)"
               v-model="block.code"
               :ref="
                 (element) => registerTextEditor(block.id, element as Element | null)
@@ -1329,9 +1470,20 @@ onBeforeUnmount(() => {
               @click="rememberSelection(block.id, $event)"
               @keyup="rememberSelection(block.id, $event)"
               @select="rememberSelection(block.id, $event)"
+              @keydown="void handleCodeEditorKeydown(block.id, block.language, $event)"
               @input="handleCodeInput(block.id, $event)"
               @contextmenu="void openDesktopContextMenu($event, block.id)"
             />
+
+            <button
+              v-else
+              class="note-form__code-preview"
+              type="button"
+              :disabled="isSubmitting"
+              @click="void expandCodeBlock(block.id)"
+            >
+              <pre class="note-form__code-preview-content">{{ block.code || 'Пустой блок кода' }}</pre>
+            </button>
           </div>
 
           <button
@@ -1507,7 +1659,8 @@ onBeforeUnmount(() => {
 .note-form__canvas-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 0.72rem;
   padding-bottom: 0.2rem;
 }
@@ -1606,6 +1759,16 @@ onBeforeUnmount(() => {
   padding-inline: 0.78rem;
 }
 
+.note-form__code-save {
+  min-height: 2.45rem;
+  padding-inline: 0.78rem;
+}
+
+.note-form__code-card--collapsed {
+  padding: 0;
+  border-color: rgba(180, 154, 123, 0.16);
+}
+
 .note-form__segment--selected-all {
   background: rgba(31, 109, 90, 0.06);
 }
@@ -1642,6 +1805,32 @@ onBeforeUnmount(() => {
   background: rgba(18, 19, 24, 0.92);
   color: #f4f1eb;
   padding: 0.9rem 1rem;
+  font-family:
+    Consolas,
+    'SFMono-Regular',
+    'Cascadia Mono',
+    'Liberation Mono',
+    monospace;
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+
+.note-form__code-preview {
+  display: block;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-radius: 20px;
+  background: rgba(18, 19, 24, 0.92);
+  color: #f4f1eb;
+  text-align: left;
+  cursor: text;
+}
+
+.note-form__code-preview-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
   font-family:
     Consolas,
     'SFMono-Regular',
