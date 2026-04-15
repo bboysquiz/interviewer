@@ -492,6 +492,10 @@ const getBlockHeuristicSourceText = (
     return block.text
   }
 
+  if (block.type === 'code') {
+    return `${block.language}\n${block.code}`
+  }
+
   const attachment = input.attachmentsById[block.attachmentId]
 
   return [
@@ -1331,6 +1335,19 @@ const buildOrganizationInput = (
           type: 'text',
           text: truncateText(
             normalizedText,
+            Math.min(budget.maxTextBlockChars, perBlockBudget * 2),
+          ),
+        }
+      }
+
+      if (block.type === 'code') {
+        const normalizedCode = normalizeInlineText(block.code)
+
+        return {
+          id: block.id,
+          type: 'text',
+          text: truncateText(
+            `Код (${block.language})\n${normalizedCode}`,
             Math.min(budget.maxTextBlockChars, perBlockBudget * 2),
           ),
         }

@@ -261,6 +261,20 @@ const buildNoteFragments = (
       continue
     }
 
+    if (block.type === 'code') {
+      fragments.push(
+        ...splitFragmentContent(
+          note.id,
+          note.category_id,
+          note.title,
+          'note_content',
+          `\`\`\`${block.language}\n${block.code}\n\`\`\``,
+          `code:${note.id}:${block.id}`,
+        ),
+      )
+      continue
+    }
+
     fragments.push(...buildScreenshotFragments(note, block, attachmentsById))
   }
 

@@ -2,6 +2,7 @@ import { buildApiUrl } from '@/services/client/http'
 import type { Attachment } from '@/types'
 
 import type { NoteFormBlock, NoteFormImageBlock } from '@/features/notes/noteForm'
+import { CODE_BLOCK_LANGUAGE_OPTIONS } from '@/features/editor/codeBlocks'
 
 interface ExportNotebookInput {
   title: string
@@ -123,6 +124,28 @@ const renderTextBlockHtml = (text: string): string => {
   return `<section class="note-export__text">${escapeHtml(normalized)}</section>`
 }
 
+const renderCodeBlockHtml = (
+  language: string,
+  code: string,
+): string => {
+  const normalizedCode = code.replace(/\r\n?/g, '\n').trim()
+
+  if (!normalizedCode) {
+    return ''
+  }
+
+  const languageLabel =
+    CODE_BLOCK_LANGUAGE_OPTIONS.find((option) => option.value === language)?.label ??
+    language.toUpperCase()
+
+  return [
+    '<section class="note-export__code-block">',
+    `  <div class="note-export__code-label">${escapeHtml(languageLabel)}</div>`,
+    `  <pre class="note-export__code"><code>${escapeHtml(normalizedCode)}</code></pre>`,
+    '</section>',
+  ].join('\n')
+}
+
 const renderImageBlockHtml = async (
   block: NoteFormImageBlock,
   attachmentsById: Record<string, Attachment>,
@@ -158,6 +181,16 @@ const buildNotebookExportHtml = async (
       continue
     }
 
+    if (block.type === 'code') {
+      const rendered = renderCodeBlockHtml(block.language, block.code)
+
+      if (rendered) {
+        contentParts.push(rendered)
+      }
+
+      continue
+    }
+
     const rendered = await renderImageBlockHtml(block, input.attachmentsById)
 
     if (rendered) {
@@ -181,6 +214,9 @@ const buildNotebookExportHtml = async (
     '    .note-export__title { margin: 0 0 18px; font-size: 28px; line-height: 1.1; font-weight: 800; }',
     '    .note-export__content { display: flex; flex-direction: column; gap: 18px; }',
     '    .note-export__text { white-space: pre-wrap; line-height: 1.62; font-size: 17px; }',
+    '    .note-export__code-block { display: flex; flex-direction: column; gap: 8px; }',
+    '    .note-export__code-label { font-size: 13px; font-weight: 700; color: #7a6551; letter-spacing: 0.02em; text-transform: uppercase; }',
+    '    .note-export__code { margin: 0; padding: 16px; border-radius: 18px; background: #18191f; color: #f4f1eb; overflow: auto; font: 14px/1.55 SFMono-Regular, Menlo, Consolas, monospace; }',
     '    .note-export__figure { margin: 0; }',
     '    .note-export__image { display: block; width: 100%; height: auto; border-radius: 18px; box-shadow: 0 10px 28px rgba(47, 36, 26, 0.12); }',
     '  </style>',

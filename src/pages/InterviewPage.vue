@@ -6,6 +6,7 @@ import {
   clearContextualFooter,
   setContextualFooter,
 } from '@/features/navigation/contextualFooter'
+import InterviewAnswerComposer from '@/features/interview/InterviewAnswerComposer.vue'
 import InterviewResultPanel from '@/features/interview/InterviewResultPanel.vue'
 import InterviewWeakSpotsPanel from '@/features/interview/InterviewWeakSpotsPanel.vue'
 import { useInterviewPractice } from '@/features/interview/useInterviewPractice'
@@ -365,11 +366,9 @@ onBeforeUnmount(() => {
 
         <label class="interview-page__field">
           <span class="interview-page__label">Ответ</span>
-          <textarea
+          <InterviewAnswerComposer
             v-model="answerText"
-            class="interview-page__textarea"
             :disabled="isEvaluating"
-            rows="7"
             placeholder="Напиши ответ так, как сказал бы его на интервью."
           />
         </label>
@@ -522,8 +521,7 @@ onBeforeUnmount(() => {
   flex: 1 1 100%;
 }
 
-.interview-page__select,
-.interview-page__textarea {
+.interview-page__select {
   width: 100%;
   border: 1px solid rgba(180, 154, 123, 0.24);
   border-radius: 18px;
@@ -540,14 +538,7 @@ onBeforeUnmount(() => {
   padding: 0.9rem 1rem;
 }
 
-.interview-page__textarea {
-  min-height: 11rem;
-  padding: 1rem;
-  resize: vertical;
-}
-
-.interview-page__select:focus,
-.interview-page__textarea:focus {
+.interview-page__select:focus {
   border-color: rgba(149, 90, 48, 0.48);
   box-shadow: 0 0 0 3px rgba(149, 90, 48, 0.12);
 }

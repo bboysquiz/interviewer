@@ -2,7 +2,12 @@
 import { openImageViewer } from '@/features/images/imageViewer'
 import { buildApiUrl } from '@/services/client/http'
 import { highlightText } from '@/shared/lib/highlight'
-import type { Attachment, NoteContentBlock, NoteImageBlock } from '@/types'
+import type {
+  Attachment,
+  NoteCodeBlock,
+  NoteContentBlock,
+  NoteImageBlock,
+} from '@/types'
 
 const props = withDefaults(
   defineProps<{
@@ -89,6 +94,22 @@ const imageStatusCopy = (block: NoteImageBlock): string | null => {
 
 const highlightedText = (value: string): string =>
   highlightText(value, props.highlightQuery)
+
+const codeLanguageLabel = (block: NoteCodeBlock): string => {
+  switch (block.language) {
+    case 'html':
+      return 'HTML'
+    case 'css':
+      return 'CSS'
+    case 'ts':
+      return 'TypeScript'
+    case 'vue':
+      return 'Vue'
+    case 'js':
+    default:
+      return 'JavaScript'
+  }
+}
 </script>
 
 <template>
@@ -109,6 +130,16 @@ const highlightedText = (value: string): string =>
         class="note-content-renderer__text"
         v-html="highlightedText(block.text)"
       />
+
+      <div
+        v-else-if="block.type === 'code'"
+        class="note-content-renderer__code"
+      >
+        <div class="tag-row">
+          <span class="tag">{{ codeLanguageLabel(block) }}</span>
+        </div>
+        <pre class="note-content-renderer__code-pre"><code>{{ block.code }}</code></pre>
+      </div>
 
       <template v-else>
         <button
@@ -216,6 +247,29 @@ const highlightedText = (value: string): string =>
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.note-content-renderer__code {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.note-content-renderer__code-pre {
+  margin: 0;
+  overflow: auto;
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(18, 19, 24, 0.94);
+  color: #f4f1eb;
+  font-family:
+    Consolas,
+    'SFMono-Regular',
+    'Cascadia Mono',
+    'Liberation Mono',
+    monospace;
+  font-size: 0.92rem;
+  line-height: 1.55;
 }
 
 .note-content-renderer__copy {

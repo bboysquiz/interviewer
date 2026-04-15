@@ -3,11 +3,25 @@ import type {
   UpdateNoteInput,
 } from '@/services/client/knowledgeBaseApi'
 import type { Note, NoteContentBlock } from '@/types'
+import {
+  DEFAULT_CODE_BLOCK_LANGUAGE,
+  hasMeaningfulEditorText,
+  normalizeEditorText,
+  serializeTextAndCodeBlocksToPlainText,
+  type CodeBlockLanguage,
+} from '@/features/editor/codeBlocks'
 
 export interface NoteFormTextBlock {
   id: string
   type: 'text'
   text: string
+}
+
+export interface NoteFormCodeBlock {
+  id: string
+  type: 'code'
+  language: CodeBlockLanguage
+  code: string
 }
 
 export interface NoteFormImageBlock {
@@ -19,7 +33,10 @@ export interface NoteFormImageBlock {
   uploadFile: File | null
 }
 
-export type NoteFormBlock = NoteFormTextBlock | NoteFormImageBlock
+export type NoteFormBlock =
+  | NoteFormTextBlock
+  | NoteFormCodeBlock
+  | NoteFormImageBlock
 
 export interface NoteFormValues {
   title: string
@@ -33,6 +50,12 @@ export interface NoteFormSnapshot {
         id: string
         type: 'text'
         text: string
+      }
+    | {
+        id: string
+        type: 'code'
+        language: CodeBlockLanguage
+        code: string
       }
     | {
         id: string
@@ -69,12 +92,6 @@ const createBlockId = (): string => {
   return `block-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-const normalizeTextBlockValue = (value: string): string =>
-  value.replace(/\r\n?/g, '\n')
-
-const hasMeaningfulText = (value: string): boolean =>
-  normalizeTextBlockValue(value).trim().length > 0
-
 export const createTextBlock = (
   text = '',
   id = createBlockId(),
@@ -82,6 +99,17 @@ export const createTextBlock = (
   id,
   type: 'text',
   text,
+})
+
+export const createCodeBlock = (
+  code = '',
+  language: CodeBlockLanguage = DEFAULT_CODE_BLOCK_LANGUAGE,
+  id = createBlockId(),
+): NoteFormCodeBlock => ({
+  id,
+  type: 'code',
+  language,
+  code,
 })
 
 export const createImageBlockFromFile = (
@@ -133,7 +161,11 @@ export const normalizeNoteFormBlocks = (
       return Boolean(block.attachmentId || block.uploadFile)
     }
 
-    const isMeaningful = hasMeaningfulText(block.text)
+    if (block.type === 'code') {
+      return block.code.trim().length > 0
+    }
+
+    const isMeaningful = hasMeaningfulEditorText(block.text)
 
     if (isMeaningful) {
       return true
@@ -158,7 +190,11 @@ export const normalizeNoteFormBlocks = (
 
 export const hasNoteFormContent = (value: NoteFormValues): boolean =>
   normalizeNoteFormBlocks(value.blocks).some((block) =>
-    block.type === 'image' ? true : hasMeaningfulText(block.text),
+    block.type === 'image'
+      ? true
+      : block.type === 'code'
+        ? block.code.trim().length > 0
+        : hasMeaningfulEditorText(block.text),
   )
 
 export const createEmptyNoteForm = (): NoteFormValues => ({
@@ -175,6 +211,10 @@ export const cloneNoteFormValues = (
       ? {
           ...block,
         }
+      : block.type === 'code'
+        ? {
+            ...block,
+          }
       : {
           ...block,
           attachmentId: block.attachmentId,
@@ -194,6 +234,13 @@ export const createNoteFormFingerprint = (value: NoteFormValues): string =>
             type: block.type,
             text: block.text,
           }
+        : block.type === 'code'
+          ? {
+              id: block.id,
+              type: block.type,
+              language: block.language,
+              code: block.code,
+            }
         : {
             id: block.id,
             type: block.type,
@@ -221,11 +268,13 @@ export const createNoteFormFromNote = (note: Note): NoteFormValues => ({
         ? note.contentBlocks.map((block) =>
             block.type === 'text'
               ? createTextBlock(block.text, block.id)
+              : block.type === 'code'
+                ? createCodeBlock(block.code, block.language, block.id)
               : createImageBlockFromAttachment(block.attachmentId, '', block.id),
           )
         : [createTextBlock(note.rawText)]
 
-    if (blocks[blocks.length - 1]?.type === 'image') {
+    if (blocks[blocks.length - 1]?.type !== 'text') {
       blocks.push(createTextBlock())
     }
 
@@ -234,11 +283,12 @@ export const createNoteFormFromNote = (note: Note): NoteFormValues => ({
 })
 
 export const buildPlainTextFromBlocks = (blocks: NoteFormBlock[]): string =>
-  normalizeNoteFormBlocks(blocks)
-    .filter((block): block is NoteFormTextBlock => block.type === 'text')
-    .map((block) => normalizeTextBlockValue(block.text).trim())
-    .filter(Boolean)
-    .join('\n\n')
+  serializeTextAndCodeBlocksToPlainText(
+    normalizeNoteFormBlocks(blocks).filter(
+      (block): block is NoteFormTextBlock | NoteFormCodeBlock =>
+        block.type === 'text' || block.type === 'code',
+    ),
+  )
 
 export const toPersistedContentBlocks = (
   blocks: NoteFormBlock[],
@@ -246,9 +296,9 @@ export const toPersistedContentBlocks = (
   normalizeNoteFormBlocks(blocks)
     .map((block): NoteContentBlock | null => {
       if (block.type === 'text') {
-        const text = normalizeTextBlockValue(block.text)
+        const text = normalizeEditorText(block.text)
 
-        if (!hasMeaningfulText(text)) {
+        if (!hasMeaningfulEditorText(text)) {
           return null
         }
 
@@ -256,6 +306,15 @@ export const toPersistedContentBlocks = (
           id: block.id,
           type: 'text',
           text,
+        }
+      }
+
+      if (block.type === 'code') {
+        return {
+          id: block.id,
+          type: 'code',
+          language: block.language,
+          code: normalizeEditorText(block.code),
         }
       }
 

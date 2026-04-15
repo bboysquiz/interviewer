@@ -651,6 +651,30 @@ const noteSearchMatches = computed<NoteSearchMatch[]>(() => {
       continue
     }
 
+    if (block.type === 'code') {
+      const normalizedCode = normalizeSearchValue(block.code)
+
+      if (!normalizedCode) {
+        continue
+      }
+
+      const offsets = collectTextMatchOffsets(normalizedCode, query)
+
+      offsets.forEach((offset, occurrenceIndex) => {
+        matches.push({
+          id: `${block.id}:code:${occurrenceIndex}`,
+          blockId: block.id,
+          blockType: 'text',
+          label: `Код · ${block.language.toUpperCase()}`,
+          preview: buildSearchPreview(block.code, offset, query.length),
+          selectionStart: offset,
+          selectionEnd: offset + query.length,
+        })
+      })
+
+      continue
+    }
+
     const attachment = block.attachmentId
       ? attachmentsById.value[block.attachmentId] ?? null
       : null
@@ -712,7 +736,11 @@ const isDirty = computed(() => formFingerprint.value !== lastSavedFingerprint.va
 const canUndo = computed(() => undoStack.value.length > 0 && !isSaving.value)
 const hasMeaningfulNotebookContent = computed(() =>
   notebookForm.value.blocks.some((block) =>
-    block.type === 'image' ? true : block.text.trim().length > 0,
+    block.type === 'image'
+      ? true
+      : block.type === 'code'
+        ? block.code.trim().length > 0
+        : block.text.trim().length > 0,
   ),
 )
 
@@ -1578,7 +1606,11 @@ const appendImportedDrafts = (
 
   for (const draft of drafts) {
     const hasExistingMeaningfulBlocks = nextBlocks.some((block) =>
-      block.type === 'image' ? true : block.text.trim().length > 0,
+      block.type === 'image'
+        ? true
+        : block.type === 'code'
+          ? block.code.trim().length > 0
+          : block.text.trim().length > 0,
     )
 
     if (hasExistingMeaningfulBlocks) {

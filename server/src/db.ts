@@ -9,6 +9,7 @@ import {
   deriveRawTextFromContentBlocks,
   parseNoteContentBlocks,
   serializeNoteContentBlocks,
+  type NoteContentBlock,
 } from './lib/noteContent.js'
 import { createId, nowIso } from './lib/text.js'
 
@@ -233,10 +234,7 @@ const runMigrations = (db: SqliteDatabase): void => {
         }
 
         const canonicalNote = categoryNotes[0]
-        const mergedBlocks: Array<
-          | { id: string; type: 'text'; text: string }
-          | { id: string; type: 'image'; attachmentId: string }
-        > = []
+        const mergedBlocks: NoteContentBlock[] = []
 
         for (const note of categoryNotes) {
           const attachmentIds = (

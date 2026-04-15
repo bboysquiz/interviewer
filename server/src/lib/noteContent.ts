@@ -6,13 +6,23 @@ export interface NoteTextContentBlock {
   text: string
 }
 
+export interface NoteCodeContentBlock {
+  id: string
+  type: 'code'
+  language: 'html' | 'css' | 'js' | 'vue' | 'ts'
+  code: string
+}
+
 export interface NoteImageContentBlock {
   id: string
   type: 'image'
   attachmentId: string
 }
 
-export type NoteContentBlock = NoteTextContentBlock | NoteImageContentBlock
+export type NoteContentBlock =
+  | NoteTextContentBlock
+  | NoteCodeContentBlock
+  | NoteImageContentBlock
 
 const normalizeText = (value: string): string => value.replace(/\r\n?/g, '\n')
 
@@ -69,6 +79,20 @@ const sanitizeContentBlock = (value: unknown): NoteContentBlock | null => {
       id: typeof value.id === 'string' && value.id.trim() ? value.id : createId(),
       type: 'text',
       text,
+    }
+  }
+
+  if (
+    value.type === 'code' &&
+    typeof value.code === 'string' &&
+    typeof value.language === 'string' &&
+    ['html', 'css', 'js', 'vue', 'ts'].includes(value.language)
+  ) {
+    return {
+      id: typeof value.id === 'string' && value.id.trim() ? value.id : createId(),
+      type: 'code',
+      language: value.language as NoteCodeContentBlock['language'],
+      code: normalizeText(value.code),
     }
   }
 
@@ -154,7 +178,22 @@ export const deriveRawTextFromContentBlocks = (
   blocks: NoteContentBlock[],
 ): string =>
   blocks
-    .filter((block): block is NoteTextContentBlock => block.type === 'text')
-    .map((block) => block.text.trim())
+    .map((block) => {
+      if (block.type === 'text') {
+        return block.text.trim()
+      }
+
+      if (block.type === 'code') {
+        const normalizedCode = block.code.trim()
+
+        if (!normalizedCode) {
+          return ''
+        }
+
+        return `\`\`\`${block.language}\n${normalizedCode}\n\`\`\``
+      }
+
+      return ''
+    })
     .filter(Boolean)
     .join('\n\n')

@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 
+import {
+  CODE_BLOCK_LANGUAGE_OPTIONS,
+  DEFAULT_CODE_BLOCK_LANGUAGE,
+  normalizeEditorText,
+  type CodeBlockLanguage,
+} from '@/features/editor/codeBlocks'
 import { openImageViewer } from '@/features/images/imageViewer'
 import {
+  createCodeBlock,
   createImageBlockFromFile,
   createTextBlock,
   revokeBlockPreviewUrl,
@@ -12,7 +19,9 @@ import {
   type NoteFormValues,
 } from '@/features/notes/noteForm'
 import { buildApiUrl } from '@/services/client/http'
+import { probeClipboardAvailability, readClipboardContent } from '@/shared/lib/clipboard'
 import ConfirmSheet from '@/shared/ui/ConfirmSheet.vue'
+import EditorContextMenu from '@/shared/ui/EditorContextMenu.vue'
 import type { Attachment } from '@/types'
 
 interface EditorSelectionSnapshot {
@@ -26,6 +35,15 @@ interface SearchFocusTarget {
   selectionStart?: number | null
   selectionEnd?: number | null
   focus?: boolean
+}
+
+interface ContextMenuState {
+  open: boolean
+  x: number
+  y: number
+  blockId: string | null
+  clipboardHasText: boolean
+  clipboardHasImage: boolean
 }
 
 const form = defineModel<NoteFormValues>({ required: true })
@@ -91,13 +109,41 @@ const lastSelection = ref<EditorSelectionSnapshot | null>(null)
 const selectedImageBlockId = ref<string | null>(null)
 const isCanvasSelectAllActive = ref(false)
 const isClearConfirmOpen = ref(false)
+const pendingFileInsertSelection = ref<EditorSelectionSnapshot | null>(null)
+const contextMenu = ref<ContextMenuState>({
+  open: false,
+  x: 0,
+  y: 0,
+  blockId: null,
+  clipboardHasText: false,
+  clipboardHasImage: false,
+})
 
 const hasBlocks = computed(() => form.value.blocks.length > 0)
 const matchedBlockIdSet = computed(() => new Set(props.matchedBlockIds ?? []))
+const codeLanguageOptions = CODE_BLOCK_LANGUAGE_OPTIONS
 const showCanvasToolbar = computed(
   () => Boolean(props.statusLabel) || props.showUndo || props.showClear,
 )
 const showFooterActions = computed(() => props.showSubmit || props.showCancel)
+const contextMenuActions = computed(() => [
+  {
+    id: 'paste',
+    label: 'Вставить',
+    disabled:
+      !contextMenu.value.clipboardHasText && !contextMenu.value.clipboardHasImage,
+  },
+  {
+    id: 'add-image',
+    label: 'Добавить картинку',
+    disabled: false,
+  },
+  {
+    id: 'add-code',
+    label: 'Написать код',
+    disabled: false,
+  },
+])
 
 const attachmentForBlock = (block: NoteFormImageBlock): Attachment | null =>
   block.attachmentId ? props.attachmentsById[block.attachmentId] ?? null : null
@@ -188,6 +234,13 @@ const createEditorBlocks = (blocks: NoteFormBlock[]): NoteFormBlock[] => {
       continue
     }
 
+    if (block.type === 'code') {
+      merged.push({
+        ...block,
+      })
+      continue
+    }
+
     const previousBlock = merged[merged.length - 1]
 
     if (previousBlock?.type === 'text') {
@@ -209,20 +262,20 @@ const createEditorBlocks = (blocks: NoteFormBlock[]): NoteFormBlock[] => {
 
   const withInsertionPoints: NoteFormBlock[] = []
 
-  if (merged[0]?.type === 'image') {
+  if (merged[0]?.type !== 'text') {
     withInsertionPoints.push(createTextBlock())
   }
 
   merged.forEach((block, index) => {
     withInsertionPoints.push(block)
 
-    if (block.type !== 'image') {
+    if (block.type === 'text') {
       return
     }
 
     const nextBlock = merged[index + 1]
 
-    if (!nextBlock || nextBlock.type === 'image') {
+    if (!nextBlock || nextBlock.type !== 'text') {
       withInsertionPoints.push(createTextBlock())
     }
   })
@@ -234,6 +287,17 @@ const replaceBlocks = (blocks: NoteFormBlock[]): void => {
   form.value = {
     ...form.value,
     blocks: createEditorBlocks(blocks),
+  }
+}
+
+const closeContextMenu = (): void => {
+  contextMenu.value = {
+    open: false,
+    x: 0,
+    y: 0,
+    blockId: null,
+    clipboardHasText: false,
+    clipboardHasImage: false,
   }
 }
 
@@ -257,6 +321,23 @@ const registerTextEditor = (blockId: string, element: Element | null): void => {
   }
 
   textEditors.delete(blockId)
+}
+
+const isInsertionPointTextBlock = (blockIndex: number): boolean => {
+  const block = form.value.blocks[blockIndex]
+
+  if (!block || block.type !== 'text') {
+    return false
+  }
+
+  if (normalizeEditorText(block.text).trim().length > 0) {
+    return false
+  }
+
+  const previousBlock = form.value.blocks[blockIndex - 1]
+  const nextBlock = form.value.blocks[blockIndex + 1]
+
+  return previousBlock?.type !== 'text' || nextBlock?.type !== 'text'
 }
 
 const scrollBlockIntoView = (blockId: string): void => {
@@ -312,7 +393,24 @@ const rememberSelection = (blockId: string, event: Event): void => {
   selectedImageBlockId.value = null
 }
 
+const focusInsertionPoint = async (
+  blockId: string,
+  event: MouseEvent | PointerEvent,
+): Promise<void> => {
+  const target = event.target
+
+  if (target instanceof HTMLTextAreaElement) {
+    return
+  }
+
+  await focusTextBlock(blockId, 0)
+}
+
 const handleTextInput = (blockId: string, event: Event): void => {
+  rememberSelection(blockId, event)
+}
+
+const handleCodeInput = (blockId: string, event: Event): void => {
   rememberSelection(blockId, event)
 }
 
@@ -495,9 +593,142 @@ const appendImagesToEnd = (
   }
 }
 
+const insertTextIntoBlock = (
+  selection: EditorSelectionSnapshot,
+  text: string,
+): { blockId: string; caretPosition: number } | null => {
+  const blockIndex = findBlockIndexById(selection.blockId)
+  const block = form.value.blocks[blockIndex]
+
+  if (!block || (block.type !== 'text' && block.type !== 'code')) {
+    return null
+  }
+
+  const currentValue = block.type === 'text' ? block.text : block.code
+  const safeStart = Math.max(0, Math.min(selection.selectionStart, currentValue.length))
+  const safeEnd = Math.max(safeStart, Math.min(selection.selectionEnd, currentValue.length))
+  const nextValue =
+    currentValue.slice(0, safeStart) + text + currentValue.slice(safeEnd)
+  const nextBlocks = [...form.value.blocks]
+
+  nextBlocks[blockIndex] =
+    block.type === 'text'
+      ? {
+          ...block,
+          text: nextValue,
+        }
+      : {
+          ...block,
+          code: nextValue,
+        }
+
+  replaceBlocks(nextBlocks)
+
+  return {
+    blockId: block.id,
+    caretPosition: safeStart + text.length,
+  }
+}
+
+const insertCodeBlockAtSelection = (
+  selection: EditorSelectionSnapshot,
+  language: CodeBlockLanguage = DEFAULT_CODE_BLOCK_LANGUAGE,
+): { blockId: string; caretPosition: number } | null => {
+  const blockIndex = findBlockIndexById(selection.blockId)
+  const block = form.value.blocks[blockIndex]
+
+  if (!block) {
+    return null
+  }
+
+  if (block.type === 'code') {
+    const nextBlocks = [...form.value.blocks]
+    const nextCodeBlock = createCodeBlock('', language)
+    const trailingTextBlock = createTextBlock()
+
+    nextBlocks.splice(blockIndex + 1, 0, nextCodeBlock, trailingTextBlock)
+    replaceBlocks(nextBlocks)
+
+    return {
+      blockId: nextCodeBlock.id,
+      caretPosition: 0,
+    }
+  }
+
+  if (block.type !== 'text') {
+    return null
+  }
+
+  const safeStart = Math.max(0, Math.min(selection.selectionStart, block.text.length))
+  const safeEnd = Math.max(safeStart, Math.min(selection.selectionEnd, block.text.length))
+  const beforeText = block.text.slice(0, safeStart)
+  const afterText = block.text.slice(safeEnd)
+  const replacementBlocks: NoteFormBlock[] = []
+
+  if (beforeText.length > 0) {
+    replacementBlocks.push({
+      ...block,
+      text: beforeText,
+    })
+  }
+
+  const nextCodeBlock = createCodeBlock('', language)
+  replacementBlocks.push(nextCodeBlock)
+
+  if (afterText.length > 0) {
+    replacementBlocks.push(createTextBlock(afterText))
+  } else {
+    replacementBlocks.push(createTextBlock())
+  }
+
+  const nextBlocks = [...form.value.blocks]
+  nextBlocks.splice(blockIndex, 1, ...replacementBlocks)
+  replaceBlocks(nextBlocks)
+
+  return {
+    blockId: nextCodeBlock.id,
+    caretPosition: 0,
+  }
+}
+
+const removeCodeBlock = async (blockId: string): Promise<void> => {
+  const blockIndex = findBlockIndexById(blockId)
+  const block = form.value.blocks[blockIndex]
+
+  if (!block || block.type !== 'code') {
+    return
+  }
+
+  const previousBlock = form.value.blocks[blockIndex - 1]
+  const nextBlock = form.value.blocks[blockIndex + 1]
+  const nextBlocks = [...form.value.blocks]
+
+  if (previousBlock?.type === 'text' && nextBlock?.type === 'text') {
+    nextBlocks.splice(blockIndex - 1, 3, {
+      ...previousBlock,
+      text: previousBlock.text + nextBlock.text,
+    })
+    replaceBlocks(nextBlocks)
+    await focusTextBlock(previousBlock.id, previousBlock.text.length)
+    return
+  }
+
+  nextBlocks.splice(blockIndex, 1)
+  replaceBlocks(nextBlocks)
+
+  const fallbackTextBlock = form.value.blocks.find(
+    (candidate): candidate is NoteFormTextBlock => candidate.type === 'text',
+  )
+
+  if (fallbackTextBlock) {
+    await focusTextBlock(fallbackTextBlock.id, fallbackTextBlock.text.length)
+  }
+}
+
 const openFilePicker = (): void => {
   pickerError.value = null
   resetCanvasSelectAll()
+  closeContextMenu()
   fileInput.value?.click()
 }
 
@@ -519,13 +750,17 @@ const handleFileSelection = async (event: Event): Promise<void> => {
   }
 
   const selection = lastSelection.value
+  const preferredSelection = pendingFileInsertSelection.value
   const focusTarget =
-    selection && findBlockIndexById(selection.blockId) >= 0
-      ? insertImagesAtSelection(selection, imageFiles) ?? appendImagesToEnd(imageFiles)
+    preferredSelection && findBlockIndexById(preferredSelection.blockId) >= 0
+      ? insertImagesAtSelection(preferredSelection, imageFiles) ?? appendImagesToEnd(imageFiles)
+      : selection && findBlockIndexById(selection.blockId) >= 0
+        ? insertImagesAtSelection(selection, imageFiles) ?? appendImagesToEnd(imageFiles)
       : appendImagesToEnd(imageFiles)
 
   pickerError.value = null
   resetCanvasSelectAll()
+  pendingFileInsertSelection.value = null
   input.value = ''
   await focusTextBlock(focusTarget.blockId, focusTarget.caretPosition)
 }
@@ -572,6 +807,99 @@ const handleEditorPaste = async (
 
   if (focusTarget) {
     await focusTextBlock(focusTarget.blockId, focusTarget.caretPosition)
+  }
+}
+
+const openDesktopContextMenu = async (
+  event: MouseEvent,
+  blockId: string,
+): Promise<void> => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  event.preventDefault()
+  const target = event.target
+
+  if (target instanceof HTMLTextAreaElement) {
+    lastSelection.value = createSelectionSnapshot(blockId, target)
+  }
+
+  contextMenu.value = {
+    open: true,
+    x: event.clientX,
+    y: event.clientY,
+    blockId,
+    clipboardHasText: false,
+    clipboardHasImage: false,
+  }
+
+  const availability = await probeClipboardAvailability()
+
+  if (!contextMenu.value.open || contextMenu.value.blockId !== blockId) {
+    return
+  }
+
+  contextMenu.value = {
+    ...contextMenu.value,
+    clipboardHasText: availability.hasText,
+    clipboardHasImage: availability.hasImage,
+  }
+}
+
+const handleContextMenuAction = async (actionId: string): Promise<void> => {
+  const targetBlockId = contextMenu.value.blockId
+  closeContextMenu()
+
+  if (!targetBlockId) {
+    return
+  }
+
+  const selection =
+    lastSelection.value?.blockId === targetBlockId
+      ? lastSelection.value
+      : {
+          blockId: targetBlockId,
+          selectionStart: 0,
+          selectionEnd: 0,
+        }
+
+  if (actionId === 'add-image') {
+    pendingFileInsertSelection.value = selection
+    openFilePicker()
+    return
+  }
+
+  if (actionId === 'add-code') {
+    const focusTarget = insertCodeBlockAtSelection(selection)
+
+    if (focusTarget) {
+      await focusTextBlock(focusTarget.blockId, focusTarget.caretPosition)
+    }
+
+    return
+  }
+
+  if (actionId !== 'paste') {
+    return
+  }
+
+  const clipboardContent = await readClipboardContent()
+
+  if (clipboardContent.imageFiles.length > 0) {
+    const focusTarget =
+      insertImagesAtSelection(selection, clipboardContent.imageFiles) ??
+      appendImagesToEnd(clipboardContent.imageFiles)
+    await focusTextBlock(focusTarget.blockId, focusTarget.caretPosition)
+    return
+  }
+
+  if (clipboardContent.text) {
+    const focusTarget = insertTextIntoBlock(selection, clipboardContent.text)
+
+    if (focusTarget) {
+      await focusTextBlock(focusTarget.blockId, focusTarget.caretPosition)
+    }
   }
 }
 
@@ -718,7 +1046,7 @@ const focusSearchTarget = async (target: SearchFocusTarget): Promise<void> => {
     return
   }
 
-  if (block.type === 'text') {
+  if (block.type === 'text' || block.type === 'code') {
     const editor = textEditors.get(target.blockId)
     const shouldFocus = target.focus ?? true
 
@@ -769,6 +1097,8 @@ defineExpose({
 replaceBlocks(form.value.blocks)
 
 onBeforeUnmount(() => {
+  closeContextMenu()
+
   for (const block of form.value.blocks) {
     revokeBlockPreviewUrl(block)
   }
@@ -868,10 +1198,17 @@ onBeforeUnmount(() => {
           class="note-form__segment"
           :class="{
             'note-form__segment--image': block.type === 'image',
+            'note-form__segment--insertion-point':
+              block.type === 'text' && isInsertionPointTextBlock(index),
             'note-form__segment--selected-all': isCanvasSelectAllActive,
             'note-form__segment--matched': matchedBlockIdSet.has(block.id),
             'note-form__segment--search-active': activeSearchBlockId === block.id,
           }"
+          @pointerdown="
+            block.type === 'text' && isInsertionPointTextBlock(index)
+              ? void focusInsertionPoint(block.id, $event)
+              : undefined
+          "
         >
           <textarea
             v-if="block.type === 'text'"
@@ -881,6 +1218,7 @@ onBeforeUnmount(() => {
             "
             class="note-form__editor"
             :class="{
+              'note-form__editor--insertion-point': isInsertionPointTextBlock(index),
               'note-form__editor--selected-all': isCanvasSelectAllActive,
               'note-form__editor--matched': matchedBlockIdSet.has(block.id),
               'note-form__editor--search-active': activeSearchBlockId === block.id,
@@ -894,10 +1232,64 @@ onBeforeUnmount(() => {
             @input="handleTextInput(block.id, $event)"
             @keydown="void handleEditorBackspace($event, index)"
             @paste="void handleEditorPaste($event, block.id)"
+            @contextmenu="void openDesktopContextMenu($event, block.id)"
           />
 
+          <div
+            v-else-if="block.type === 'code'"
+            class="note-form__code-card"
+          >
+            <div class="note-form__code-toolbar">
+              <select
+                v-model="block.language"
+                class="note-form__code-language"
+                :disabled="isSubmitting"
+              >
+                <option
+                  v-for="option in codeLanguageOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+
+              <button
+                class="app-button app-button--secondary note-form__code-remove"
+                type="button"
+                :disabled="isSubmitting"
+                @click="void removeCodeBlock(block.id)"
+              >
+                Удалить код
+              </button>
+            </div>
+
+            <textarea
+              v-model="block.code"
+              :ref="
+                (element) => registerTextEditor(block.id, element as Element | null)
+              "
+              class="note-form__editor note-form__editor--code"
+              :class="{
+                'note-form__editor--selected-all': isCanvasSelectAllActive,
+                'note-form__editor--matched': matchedBlockIdSet.has(block.id),
+                'note-form__editor--search-active': activeSearchBlockId === block.id,
+              }"
+              rows="6"
+              :disabled="isSubmitting"
+              spellcheck="false"
+              placeholder="Напиши код здесь"
+              @focus="rememberSelection(block.id, $event)"
+              @click="rememberSelection(block.id, $event)"
+              @keyup="rememberSelection(block.id, $event)"
+              @select="rememberSelection(block.id, $event)"
+              @input="handleCodeInput(block.id, $event)"
+              @contextmenu="void openDesktopContextMenu($event, block.id)"
+            />
+          </div>
+
           <button
-            v-else
+            v-else-if="block.type === 'image'"
             class="note-form__image-card"
             :class="{
               'note-form__image-card--selected': selectedImageBlockId === block.id,
@@ -980,6 +1372,14 @@ onBeforeUnmount(() => {
       tone="danger"
       @cancel="closeClearCanvasConfirm"
       @confirm="void confirmClearCanvas()"
+    />
+    <EditorContextMenu
+      :open="contextMenu.open"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
+      :actions="contextMenuActions"
+      @close="closeContextMenu()"
+      @select="void handleContextMenuAction($event)"
     />
   </form>
 </template>
@@ -1100,6 +1500,55 @@ onBeforeUnmount(() => {
   border-radius: 18px;
 }
 
+.note-form__segment--insertion-point {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0;
+  cursor: text;
+}
+
+.note-form__segment--insertion-point::before {
+  content: 'Нажми, чтобы вставить текст или картинку между блоками';
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.note-form__code-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(180, 154, 123, 0.22);
+  border-radius: 20px;
+  background: rgba(36, 34, 40, 0.96);
+}
+
+.note-form__code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.note-form__code-language {
+  min-height: 2.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 251, 246, 0.96);
+  padding: 0.45rem 0.72rem;
+  font: inherit;
+}
+
+.note-form__code-remove {
+  min-height: 2.45rem;
+  padding-inline: 0.78rem;
+}
+
 .note-form__segment--image {
   padding-block: 0.18rem;
 }
@@ -1128,6 +1577,30 @@ onBeforeUnmount(() => {
   font-size: 1rem;
   line-height: 1.7;
   resize: none;
+}
+
+.note-form__editor--insertion-point {
+  min-height: 3.4rem;
+  padding: 0.72rem 0.86rem;
+  border: 1px dashed rgba(180, 154, 123, 0.46);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.note-form__editor--code {
+  min-height: 12rem;
+  border-radius: 16px;
+  background: rgba(18, 19, 24, 0.92);
+  color: #f4f1eb;
+  padding: 0.9rem 1rem;
+  font-family:
+    Consolas,
+    'SFMono-Regular',
+    'Cascadia Mono',
+    'Liberation Mono',
+    monospace;
+  font-size: 0.94rem;
+  line-height: 1.55;
 }
 
 .note-form__editor:focus {
@@ -1246,9 +1719,7 @@ onBeforeUnmount(() => {
 }
 
 .note-form__add-button {
-  align-self: flex-start;
-  margin-top: 0.15rem;
-  padding-inline: 0.72rem;
+  display: none;
 }
 
 .note-form__undo-button {
