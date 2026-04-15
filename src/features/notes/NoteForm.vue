@@ -1515,13 +1515,19 @@ onBeforeUnmount(() => {
 .note-form__status-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  inline-size: 12rem;
+  max-inline-size: 100%;
   padding: 0.42rem 0.72rem;
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 700;
   line-height: 1.1;
+  box-sizing: border-box;
   background: rgba(35, 28, 21, 0.06);
   color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
 }
 
 .note-form__status-pill--saved {
@@ -1559,9 +1565,8 @@ onBeforeUnmount(() => {
 .note-form__segment--insertion-point {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.35rem 0;
   cursor: text;
+  padding: 0;
 }
 
 .note-form__code-card {
@@ -1601,10 +1606,6 @@ onBeforeUnmount(() => {
   padding-inline: 0.78rem;
 }
 
-.note-form__segment--image {
-  padding-block: 0.18rem;
-}
-
 .note-form__segment--selected-all {
   background: rgba(31, 109, 90, 0.06);
 }
@@ -1633,7 +1634,6 @@ onBeforeUnmount(() => {
 
 .note-form__editor--insertion-point {
   min-height: 3.4rem;
-  padding: 0.72rem 0.86rem;
 }
 
 .note-form__editor--code {

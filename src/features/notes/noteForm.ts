@@ -224,40 +224,121 @@ export const cloneNoteFormValues = (
   ),
 })
 
+const createCanonicalFingerprintBlocks = (
+  blocks: NoteFormBlock[],
+): Array<
+  | {
+      type: 'text'
+      text: string
+    }
+  | {
+      type: 'code'
+      language: CodeBlockLanguage
+      code: string
+    }
+  | {
+      type: 'image'
+      attachmentId: string | null
+      fileName: string
+      uploadFile:
+        | null
+        | {
+            name: string
+            size: number
+            type: string
+            lastModified: number
+          }
+    }
+> => {
+  const canonicalBlocks: Array<
+    | {
+        type: 'text'
+        text: string
+      }
+    | {
+        type: 'code'
+        language: CodeBlockLanguage
+        code: string
+      }
+    | {
+        type: 'image'
+        attachmentId: string | null
+        fileName: string
+        uploadFile:
+          | null
+          | {
+              name: string
+              size: number
+              type: string
+              lastModified: number
+            }
+      }
+  > = []
+
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      const text = normalizeEditorText(block.text)
+
+      if (!hasMeaningfulEditorText(text)) {
+        continue
+      }
+
+      const previousBlock = canonicalBlocks[canonicalBlocks.length - 1]
+
+      if (previousBlock?.type === 'text') {
+        previousBlock.text += text
+        continue
+      }
+
+      canonicalBlocks.push({
+        type: 'text',
+        text,
+      })
+      continue
+    }
+
+    if (block.type === 'code') {
+      const code = normalizeEditorText(block.code)
+
+      if (code.trim().length === 0) {
+        continue
+      }
+
+      canonicalBlocks.push({
+        type: 'code',
+        language: block.language,
+        code,
+      })
+      continue
+    }
+
+    if (!block.attachmentId && !block.uploadFile) {
+      continue
+    }
+
+    canonicalBlocks.push({
+      type: 'image',
+      attachmentId: block.attachmentId,
+      fileName: block.fileName,
+      uploadFile:
+        block.uploadFile === null
+          ? null
+          : {
+              name: block.uploadFile.name,
+              size: block.uploadFile.size,
+              type: block.uploadFile.type,
+              lastModified: block.uploadFile.lastModified,
+            },
+    })
+  }
+
+  return canonicalBlocks
+}
+
 export const createNoteFormFingerprint = (value: NoteFormValues): string =>
   JSON.stringify({
     title: value.title,
-    blocks: value.blocks.map((block) =>
-      block.type === 'text'
-        ? {
-            id: block.id,
-            type: block.type,
-            text: block.text,
-          }
-        : block.type === 'code'
-          ? {
-              id: block.id,
-              type: block.type,
-              language: block.language,
-              code: block.code,
-            }
-        : {
-            id: block.id,
-            type: block.type,
-            attachmentId: block.attachmentId,
-            fileName: block.fileName,
-            localPreviewUrl: block.localPreviewUrl,
-            uploadFile:
-              block.uploadFile === null
-                ? null
-                : {
-                    name: block.uploadFile.name,
-                    size: block.uploadFile.size,
-                    type: block.uploadFile.type,
-                    lastModified: block.uploadFile.lastModified,
-                  },
-          },
-    ),
+    blocks: createCanonicalFingerprintBlocks(value.blocks),
   })
 
 export const createNoteFormFromNote = (note: Note): NoteFormValues => ({
