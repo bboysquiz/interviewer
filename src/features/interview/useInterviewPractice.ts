@@ -141,6 +141,8 @@ const SECTION_OPTIONS: InterviewSectionOption[] = [
   },
 ]
 
+const FULL_INTERVIEW_QUESTION_TARGET = 5
+
 const buildGenerationErrorMessage = (
   mode: InterviewPracticeMode,
 ): string =>
@@ -560,6 +562,15 @@ export const useInterviewPractice = () => {
   const fullInterviewEntries = computed(
     () => fullInterviewSession.value?.entries ?? [],
   )
+  const fullInterviewQuestionTarget = computed(
+    () => FULL_INTERVIEW_QUESTION_TARGET,
+  )
+  const fullInterviewRemainingQuestions = computed(() =>
+    Math.max(
+      0,
+      fullInterviewQuestionTarget.value - fullInterviewEntries.value.length,
+    ),
+  )
   const isFullInterviewActive = computed(
     () =>
       Boolean(
@@ -571,6 +582,10 @@ export const useInterviewPractice = () => {
   )
   const canGenerateNextFullInterviewQuestion = computed(() => {
     if (!isFullInterviewActive.value || isGenerating.value || isEvaluating.value) {
+      return false
+    }
+
+    if (fullInterviewRemainingQuestions.value <= 0) {
       return false
     }
 
@@ -1191,6 +1206,8 @@ export const useInterviewPractice = () => {
     finishFullInterview,
     fullInterviewElapsedLabel,
     fullInterviewEntries,
+    fullInterviewQuestionTarget,
+    fullInterviewRemainingQuestions,
     fullInterviewSummary,
     generateNextFullInterviewQuestion,
     generateQuestion,

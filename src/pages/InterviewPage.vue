@@ -32,6 +32,8 @@ const {
   finishFullInterview,
   fullInterviewElapsedLabel,
   fullInterviewEntries,
+  fullInterviewQuestionTarget,
+  fullInterviewRemainingQuestions,
   fullInterviewSummary,
   generateNextFullInterviewQuestion,
   generateQuestion,
@@ -182,10 +184,19 @@ onBeforeUnmount(() => {
           >
             <div class="tag-row interview-page__session-tags">
               <span class="tag">Время: {{ fullInterviewElapsedLabel }}</span>
-              <span class="tag">Вопросов: {{ fullInterviewEntries.length }}</span>
+              <span class="tag">
+                Пройдено: {{ fullInterviewEntries.length }}/{{ fullInterviewQuestionTarget }}
+              </span>
+              <span class="tag">Осталось: {{ fullInterviewRemainingQuestions }}</span>
               <span v-if="isFullInterviewActive" class="tag">Сессия активна</span>
               <span v-else-if="fullInterviewEntries.length" class="tag">
                 Сессия завершена
+              </span>
+              <span
+                v-if="isFullInterviewActive && fullInterviewRemainingQuestions === 0"
+                class="tag"
+              >
+                Все вопросы заданы
               </span>
             </div>
 
