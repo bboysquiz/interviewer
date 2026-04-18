@@ -27,6 +27,7 @@ export interface InterviewContextSummary {
   noteTitles: string[]
   noteCount: number
   chunkCount: number
+  totalFoundationCount: number
   sources: InterviewQuestionSource[]
 }
 

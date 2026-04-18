@@ -30,11 +30,13 @@ const {
   evaluationProvider,
   evaluationResponse,
   finishFullInterview,
+  fullInterviewCoveredFoundationCount,
   fullInterviewElapsedLabel,
   fullInterviewEntries,
-  fullInterviewQuestionTarget,
-  fullInterviewRemainingQuestions,
+  fullInterviewProgressPercent,
+  fullInterviewRemainingFoundations,
   fullInterviewSummary,
+  fullInterviewTotalFoundationCount,
   generateNextFullInterviewQuestion,
   generateQuestion,
   generationError,
@@ -185,18 +187,29 @@ onBeforeUnmount(() => {
             <div class="tag-row interview-page__session-tags">
               <span class="tag">Время: {{ fullInterviewElapsedLabel }}</span>
               <span class="tag">
-                Пройдено: {{ fullInterviewEntries.length }}/{{ fullInterviewQuestionTarget }}
+                Прогресс: {{ fullInterviewProgressPercent }}%
               </span>
-              <span class="tag">Осталось: {{ fullInterviewRemainingQuestions }}</span>
+              <span
+                v-if="fullInterviewTotalFoundationCount > 0"
+                class="tag"
+              >
+                Охвачено: {{ fullInterviewCoveredFoundationCount }}/{{ fullInterviewTotalFoundationCount }}
+              </span>
+              <span
+                v-if="fullInterviewTotalFoundationCount > 0"
+                class="tag"
+              >
+                Осталось оснований: {{ fullInterviewRemainingFoundations }}
+              </span>
               <span v-if="isFullInterviewActive" class="tag">Сессия активна</span>
               <span v-else-if="fullInterviewEntries.length" class="tag">
                 Сессия завершена
               </span>
               <span
-                v-if="isFullInterviewActive && fullInterviewRemainingQuestions === 0"
+                v-if="isFullInterviewActive && fullInterviewTotalFoundationCount > 0 && fullInterviewRemainingFoundations === 0"
                 class="tag"
               >
-                Все вопросы заданы
+                Заметка пройдена
               </span>
             </div>
 

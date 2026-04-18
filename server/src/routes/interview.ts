@@ -365,6 +365,9 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       )
       const generationSources = selectQuestionGenerationSources(annotatedSources)
       const sourcePool = generationSources.length > 0 ? generationSources : annotatedSources
+      const totalFoundationCount = uniqueNonEmpty(
+        context.sources.map((source) => source.foundationKey),
+      ).length
       const scopedPreviousQuestions = uniqueNonEmpty([
         ...collectScopedPreviousQuestions(
           repository,
@@ -485,6 +488,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
           noteTitles: context.noteTitles,
           noteCount: context.noteCount,
           chunkCount: context.chunkCount,
+          totalFoundationCount,
           sources: relevantSources.map((source) => ({
             ...source,
             lastQuestionedAt: timestamp,
@@ -565,6 +569,9 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       const foundationUsageMap = repository.getFoundationUsageByKeys(
         uniqueNonEmpty(context.sources.map((source) => source.foundationKey)),
       )
+      const totalFoundationCount = uniqueNonEmpty(
+        context.sources.map((source) => source.foundationKey),
+      ).length
       const annotatedSources = applyFoundationUsageToSources(
         context.sources,
         new Map(
@@ -677,6 +684,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
           noteTitles: context.noteTitles,
           noteCount: context.noteCount,
           chunkCount: context.chunkCount,
+          totalFoundationCount,
           sources: relevantSources,
         },
       })

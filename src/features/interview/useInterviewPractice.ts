@@ -141,8 +141,6 @@ const SECTION_OPTIONS: InterviewSectionOption[] = [
   },
 ]
 
-const FULL_INTERVIEW_QUESTION_TARGET = 5
-
 const buildGenerationErrorMessage = (
   mode: InterviewPracticeMode,
 ): string =>
@@ -562,13 +560,40 @@ export const useInterviewPractice = () => {
   const fullInterviewEntries = computed(
     () => fullInterviewSession.value?.entries ?? [],
   )
-  const fullInterviewQuestionTarget = computed(
-    () => FULL_INTERVIEW_QUESTION_TARGET,
-  )
-  const fullInterviewRemainingQuestions = computed(() =>
+  const fullInterviewTotalFoundationCount = computed(() =>
     Math.max(
       0,
-      fullInterviewQuestionTarget.value - fullInterviewEntries.value.length,
+      ...fullInterviewEntries.value.map(
+        (entry) => entry.question.context.totalFoundationCount ?? 0,
+      ),
+    ),
+  )
+  const fullInterviewCoveredFoundationCount = computed(() =>
+    uniqueNonEmpty(
+      fullInterviewEntries.value.flatMap((entry) =>
+        entry.question.context.sources.map((source) => source.foundationKey),
+      ),
+    ).length,
+  )
+  const fullInterviewProgressPercent = computed(() => {
+    const total = fullInterviewTotalFoundationCount.value
+
+    if (total <= 0) {
+      return fullInterviewEntries.value.length > 0 ? 100 : 0
+    }
+
+    return Math.min(
+      100,
+      Math.round(
+        (fullInterviewCoveredFoundationCount.value / total) * 100,
+      ),
+    )
+  })
+  const fullInterviewRemainingFoundations = computed(() =>
+    Math.max(
+      0,
+      fullInterviewTotalFoundationCount.value -
+        fullInterviewCoveredFoundationCount.value,
     ),
   )
   const isFullInterviewActive = computed(
@@ -585,7 +610,11 @@ export const useInterviewPractice = () => {
       return false
     }
 
-    if (fullInterviewRemainingQuestions.value <= 0) {
+    if (
+      fullInterviewTotalFoundationCount.value > 0 &&
+      fullInterviewCoveredFoundationCount.value >=
+        fullInterviewTotalFoundationCount.value
+    ) {
       return false
     }
 
@@ -1206,9 +1235,11 @@ export const useInterviewPractice = () => {
     finishFullInterview,
     fullInterviewElapsedLabel,
     fullInterviewEntries,
-    fullInterviewQuestionTarget,
-    fullInterviewRemainingQuestions,
+    fullInterviewCoveredFoundationCount,
+    fullInterviewProgressPercent,
+    fullInterviewRemainingFoundations,
     fullInterviewSummary,
+    fullInterviewTotalFoundationCount,
     generateNextFullInterviewQuestion,
     generateQuestion,
     generationError,

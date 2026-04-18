@@ -111,27 +111,6 @@ const sanitizeContentBlock = (value: unknown): NoteContentBlock | null => {
   return null
 }
 
-const appendMissingAttachmentBlocks = (
-  blocks: NoteContentBlock[],
-  attachmentIds: string[],
-): NoteContentBlock[] => {
-  const referencedAttachmentIds = new Set(
-    blocks
-      .filter((block): block is NoteImageContentBlock => block.type === 'image')
-      .map((block) => block.attachmentId),
-  )
-
-  const nextBlocks = [...blocks]
-
-  for (const attachmentId of attachmentIds.filter(Boolean)) {
-    if (!referencedAttachmentIds.has(attachmentId)) {
-      nextBlocks.push(toImageBlock(attachmentId))
-    }
-  }
-
-  return nextBlocks
-}
-
 export const parseNoteContentBlocks = (
   rawValue: unknown,
   fallbackText = '',
@@ -156,11 +135,10 @@ export const parseNoteContentBlocks = (
     .map((block) => sanitizeContentBlock(block))
     .filter((block): block is NoteContentBlock => block !== null)
 
-  if (blocks.length === 0) {
-    return buildLegacyNoteContentBlocks(fallbackText, attachmentIds)
-  }
-
-  return appendMissingAttachmentBlocks(blocks, attachmentIds)
+  // Respect the stored block list as the source of truth. Notes may keep
+  // attachment records for undo/history, but removed screenshots must not be
+  // resurrected into the visible canvas on the next load.
+  return blocks
 }
 
 export const serializeNoteContentBlocks = (
