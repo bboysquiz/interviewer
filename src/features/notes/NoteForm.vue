@@ -1351,11 +1351,14 @@ const focusSearchTarget = async (target: SearchFocusTarget): Promise<void> => {
     return
   }
 
+  const shouldFocus = target.focus ?? true
   selectImageBlock(target.blockId)
   const imageButton = imageButtons.get(target.blockId)
 
   if (imageButton) {
-    imageButton.focus()
+    if (shouldFocus) {
+      imageButton.focus()
+    }
     imageButton.scrollIntoView({
       behavior: 'smooth',
       block: 'center',
