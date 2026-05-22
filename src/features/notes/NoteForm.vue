@@ -117,6 +117,7 @@ const emit = defineEmits<{
 const fileInput = ref<HTMLInputElement | null>(null)
 const pickerError = ref<string | null>(null)
 const textEditors = new Map<string, HTMLTextAreaElement>()
+const imageButtons = new Map<string, HTMLButtonElement>()
 const segmentElements = new Map<string, HTMLElement>()
 const lastSelection = ref<EditorSelectionSnapshot | null>(null)
 const selectedImageBlockId = ref<string | null>(null)
@@ -361,6 +362,15 @@ const registerTextEditor = (blockId: string, element: Element | null): void => {
   }
 
   textEditors.delete(blockId)
+}
+
+const registerImageButton = (blockId: string, element: Element | null): void => {
+  if (element instanceof HTMLButtonElement) {
+    imageButtons.set(blockId, element)
+    return
+  }
+
+  imageButtons.delete(blockId)
 }
 
 const isInsertionPointTextBlock = (blockIndex: number): boolean => {
@@ -1342,6 +1352,17 @@ const focusSearchTarget = async (target: SearchFocusTarget): Promise<void> => {
   }
 
   selectImageBlock(target.blockId)
+  const imageButton = imageButtons.get(target.blockId)
+
+  if (imageButton) {
+    imageButton.focus()
+    imageButton.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+    return
+  }
+
   scrollBlockIntoView(target.blockId)
 }
 
@@ -1389,6 +1410,7 @@ onBeforeUnmount(() => {
   }
 
   textEditors.clear()
+  imageButtons.clear()
   segmentElements.clear()
 })
 </script>
@@ -1610,6 +1632,7 @@ onBeforeUnmount(() => {
 
           <button
             v-else-if="block.type === 'image'"
+            :ref="(element) => registerImageButton(block.id, element as Element | null)"
             class="note-form__image-card"
             :class="{
               'note-form__image-card--selected': selectedImageBlockId === block.id,

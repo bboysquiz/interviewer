@@ -946,6 +946,14 @@ const focusActiveNoteSearchMatch = async (
     return
   }
 
+  await nextTick()
+
+  if (typeof window !== 'undefined') {
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve())
+    })
+  }
+
   await noteFormRef.value?.focusSearchTarget({
     blockId: activeMatch.blockId,
     selectionStart: activeMatch.selectionStart,
@@ -954,7 +962,7 @@ const focusActiveNoteSearchMatch = async (
   })
 }
 
-const moveActiveNoteSearchMatch = (direction: 1 | -1): void => {
+const moveActiveNoteSearchMatch = async (direction: 1 | -1): Promise<void> => {
   if (!noteSearchMatches.value.length) {
     return
   }
@@ -963,6 +971,16 @@ const moveActiveNoteSearchMatch = (direction: 1 | -1): void => {
     ((activeNoteSearchMatchIndex.value + direction) % noteSearchMatches.value.length +
       noteSearchMatches.value.length) %
     noteSearchMatches.value.length
+
+  await focusActiveNoteSearchMatch()
+}
+
+const activateCurrentNoteSearchMatch = async (): Promise<void> => {
+  if (!noteSearchMatches.value.length) {
+    return
+  }
+
+  await focusActiveNoteSearchMatch()
 }
 
 const clearNoteSearch = (): void => {
@@ -2033,6 +2051,7 @@ onBeforeUnmount(() => {
             type="search"
             placeholder="Искать в заметке и по тексту скриншотов"
             enterkeyhint="search"
+            @keydown.enter.prevent="void activateCurrentNoteSearchMatch()"
           />
 
           <button
@@ -2058,7 +2077,7 @@ onBeforeUnmount(() => {
               class="app-button app-button--secondary category-notes-page__search-nav"
               type="button"
               :disabled="noteSearchMatches.length === 0"
-              @click="moveActiveNoteSearchMatch(-1)"
+              @click="void moveActiveNoteSearchMatch(-1)"
             >
               Назад
             </button>
@@ -2067,7 +2086,7 @@ onBeforeUnmount(() => {
               class="app-button app-button--secondary category-notes-page__search-nav"
               type="button"
               :disabled="noteSearchMatches.length === 0"
-              @click="moveActiveNoteSearchMatch(1)"
+              @click="void moveActiveNoteSearchMatch(1)"
             >
               Далее
             </button>
