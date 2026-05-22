@@ -50,6 +50,15 @@ interface ContextMenuState {
   clipboardHasImage: boolean
 }
 
+interface TouchContextMenuState {
+  blockId: string | null
+  timerId: ReturnType<typeof setTimeout> | null
+  triggered: boolean
+  selectionStart: number
+  selectionEnd: number
+  instantEligible: boolean
+}
+
 const form = defineModel<NoteFormValues>({ required: true })
 
 const props = withDefaults(
@@ -122,6 +131,14 @@ const contextMenu = ref<ContextMenuState>({
   blockId: null,
   clipboardHasText: false,
   clipboardHasImage: false,
+})
+const touchContextMenu = ref<TouchContextMenuState>({
+  blockId: null,
+  timerId: null,
+  triggered: false,
+  selectionStart: 0,
+  selectionEnd: 0,
+  instantEligible: false,
 })
 
 const hasBlocks = computed(() => form.value.blocks.length > 0)
@@ -306,6 +323,21 @@ const closeContextMenu = (): void => {
     blockId: null,
     clipboardHasText: false,
     clipboardHasImage: false,
+  }
+}
+
+const cancelTouchContextMenu = (): void => {
+  if (touchContextMenu.value.timerId) {
+    clearTimeout(touchContextMenu.value.timerId)
+  }
+
+  touchContextMenu.value = {
+    blockId: null,
+    timerId: null,
+    triggered: false,
+    selectionStart: 0,
+    selectionEnd: 0,
+    instantEligible: false,
   }
 }
 
@@ -953,25 +985,15 @@ const handleEditorPaste = async (
   }
 }
 
-const openDesktopContextMenu = async (
-  event: MouseEvent,
+const openContextMenu = async (
   blockId: string,
+  x: number,
+  y: number,
 ): Promise<void> => {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  event.preventDefault()
-  const target = event.target
-
-  if (target instanceof HTMLTextAreaElement) {
-    lastSelection.value = createSelectionSnapshot(blockId, target)
-  }
-
   contextMenu.value = {
     open: true,
-    x: event.clientX,
-    y: event.clientY,
+    x,
+    y,
     blockId,
     clipboardHasText: false,
     clipboardHasImage: false,
@@ -988,6 +1010,96 @@ const openDesktopContextMenu = async (
     clipboardHasText: availability.hasText,
     clipboardHasImage: availability.hasImage,
   }
+}
+
+const openDesktopContextMenu = async (
+  event: MouseEvent,
+  blockId: string,
+): Promise<void> => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  event.preventDefault()
+  const target = event.target
+
+  if (target instanceof HTMLTextAreaElement) {
+    lastSelection.value = createSelectionSnapshot(blockId, target)
+  }
+
+  await openContextMenu(blockId, event.clientX, event.clientY)
+}
+
+const handleTouchContextMenuStart = (
+  event: TouchEvent,
+  blockId: string,
+): void => {
+  if (props.isSubmitting) {
+    return
+  }
+
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return
+  }
+
+  cancelTouchContextMenu()
+  const selection = createSelectionSnapshot(blockId, target)
+  lastSelection.value = selection
+  const instantEligible =
+    typeof document !== 'undefined' && document.activeElement === target
+
+  const touch = event.touches[0]
+
+  if (!touch) {
+    return
+  }
+
+  touchContextMenu.value = {
+    blockId,
+    timerId: setTimeout(() => {
+      touchContextMenu.value = {
+        blockId,
+        timerId: null,
+        triggered: true,
+        selectionStart: selection.selectionStart,
+        selectionEnd: selection.selectionEnd,
+        instantEligible,
+      }
+      void openContextMenu(blockId, touch.clientX, touch.clientY)
+    }, 420),
+    triggered: false,
+    selectionStart: selection.selectionStart,
+    selectionEnd: selection.selectionEnd,
+    instantEligible,
+  }
+}
+
+const handleTouchContextMenuEnd = (event: TouchEvent): void => {
+  if (touchContextMenu.value.triggered) {
+    event.preventDefault()
+    cancelTouchContextMenu()
+    return
+  }
+
+  const target = event.target
+  const touch = event.changedTouches[0]
+  const state = touchContextMenu.value
+
+  if (
+    state.blockId &&
+    state.instantEligible &&
+    target instanceof HTMLTextAreaElement &&
+    target.selectionStart === state.selectionStart &&
+    target.selectionEnd === state.selectionEnd &&
+    touch
+  ) {
+    event.preventDefault()
+    void openContextMenu(state.blockId, touch.clientX, touch.clientY)
+  }
+
+  cancelTouchContextMenu()
 }
 
 const handleContextMenuAction = async (actionId: string): Promise<void> => {
@@ -1270,6 +1382,7 @@ watch(
 
 onBeforeUnmount(() => {
   closeContextMenu()
+  cancelTouchContextMenu()
 
   for (const block of form.value.blocks) {
     revokeBlockPreviewUrl(block)
@@ -1404,6 +1517,10 @@ onBeforeUnmount(() => {
             @keydown="void handleEditorBackspace($event, index)"
             @paste="void handleEditorPaste($event, block.id)"
             @contextmenu="void openDesktopContextMenu($event, block.id)"
+            @touchstart="handleTouchContextMenuStart($event, block.id)"
+            @touchmove="cancelTouchContextMenu()"
+            @touchend="handleTouchContextMenuEnd($event)"
+            @touchcancel="cancelTouchContextMenu()"
           />
 
           <div
@@ -1464,6 +1581,10 @@ onBeforeUnmount(() => {
               @keydown="void handleCodeEditorKeydown(block.id, block.language, $event)"
               @input="handleCodeInput(block.id, $event)"
               @contextmenu="void openDesktopContextMenu($event, block.id)"
+              @touchstart="handleTouchContextMenuStart($event, block.id)"
+              @touchmove="cancelTouchContextMenu()"
+              @touchend="handleTouchContextMenuEnd($event)"
+              @touchcancel="cancelTouchContextMenu()"
             />
 
             <button
@@ -1794,6 +1915,7 @@ onBeforeUnmount(() => {
   font-size: 1rem;
   line-height: 1.7;
   resize: none;
+  -webkit-touch-callout: none;
 }
 
 .note-form__editor--insertion-point {
@@ -1811,9 +1933,10 @@ onBeforeUnmount(() => {
     'SFMono-Regular',
     'Cascadia Mono',
     'Liberation Mono',
-    monospace;
+  monospace;
   font-size: 0.94rem;
   line-height: 1.55;
+  -webkit-touch-callout: none;
 }
 
 .note-form__code-preview {

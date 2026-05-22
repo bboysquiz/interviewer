@@ -33,6 +33,15 @@ interface ContextMenuState {
   clipboardHasText: boolean
 }
 
+interface TouchContextMenuState {
+  blockId: string | null
+  timerId: ReturnType<typeof setTimeout> | null
+  triggered: boolean
+  selectionStart: number
+  selectionEnd: number
+  instantEligible: boolean
+}
+
 const model = defineModel<string>({ required: true })
 
 const props = withDefaults(
@@ -55,6 +64,14 @@ const contextMenu = ref<ContextMenuState>({
   y: 0,
   blockId: null,
   clipboardHasText: false,
+})
+const touchContextMenu = ref<TouchContextMenuState>({
+  blockId: null,
+  timerId: null,
+  triggered: false,
+  selectionStart: 0,
+  selectionEnd: 0,
+  instantEligible: false,
 })
 
 const createBlockId = (): string => {
@@ -207,6 +224,21 @@ const closeContextMenu = (): void => {
     y: 0,
     blockId: null,
     clipboardHasText: false,
+  }
+}
+
+const cancelTouchContextMenu = (): void => {
+  if (touchContextMenu.value.timerId) {
+    clearTimeout(touchContextMenu.value.timerId)
+  }
+
+  touchContextMenu.value = {
+    blockId: null,
+    timerId: null,
+    triggered: false,
+    selectionStart: 0,
+    selectionEnd: 0,
+    instantEligible: false,
   }
 }
 
@@ -515,6 +547,31 @@ const handlePaste = async (
   }
 }
 
+const openContextMenu = async (
+  blockId: string,
+  x: number,
+  y: number,
+): Promise<void> => {
+  contextMenu.value = {
+    open: true,
+    x,
+    y,
+    blockId,
+    clipboardHasText: false,
+  }
+
+  const availability = await probeClipboardAvailability()
+
+  if (!contextMenu.value.open || contextMenu.value.blockId !== blockId) {
+    return
+  }
+
+  contextMenu.value = {
+    ...contextMenu.value,
+    clipboardHasText: availability.hasText,
+  }
+}
+
 const openDesktopContextMenu = async (
   event: MouseEvent,
   blockId: string,
@@ -530,24 +587,79 @@ const openDesktopContextMenu = async (
     lastSelection.value = createSelectionSnapshot(blockId, target)
   }
 
-  contextMenu.value = {
-    open: true,
-    x: event.clientX,
-    y: event.clientY,
-    blockId,
-    clipboardHasText: false,
-  }
+  await openContextMenu(blockId, event.clientX, event.clientY)
+}
 
-  const availability = await probeClipboardAvailability()
-
-  if (!contextMenu.value.open || contextMenu.value.blockId !== blockId) {
+const handleTouchContextMenuStart = (
+  event: TouchEvent,
+  blockId: string,
+): void => {
+  if (props.disabled) {
     return
   }
 
-  contextMenu.value = {
-    ...contextMenu.value,
-    clipboardHasText: availability.hasText,
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return
   }
+
+  cancelTouchContextMenu()
+  const selection = createSelectionSnapshot(blockId, target)
+  lastSelection.value = selection
+  const instantEligible =
+    typeof document !== 'undefined' && document.activeElement === target
+
+  const touch = event.touches[0]
+
+  if (!touch) {
+    return
+  }
+
+  touchContextMenu.value = {
+    blockId,
+    timerId: setTimeout(() => {
+      touchContextMenu.value = {
+        blockId,
+        timerId: null,
+        triggered: true,
+        selectionStart: selection.selectionStart,
+        selectionEnd: selection.selectionEnd,
+        instantEligible,
+      }
+      void openContextMenu(blockId, touch.clientX, touch.clientY)
+    }, 420),
+    triggered: false,
+    selectionStart: selection.selectionStart,
+    selectionEnd: selection.selectionEnd,
+    instantEligible,
+  }
+}
+
+const handleTouchContextMenuEnd = (event: TouchEvent): void => {
+  if (touchContextMenu.value.triggered) {
+    event.preventDefault()
+    cancelTouchContextMenu()
+    return
+  }
+
+  const target = event.target
+  const touch = event.changedTouches[0]
+  const state = touchContextMenu.value
+
+  if (
+    state.blockId &&
+    state.instantEligible &&
+    target instanceof HTMLTextAreaElement &&
+    target.selectionStart === state.selectionStart &&
+    target.selectionEnd === state.selectionEnd &&
+    touch
+  ) {
+    event.preventDefault()
+    void openContextMenu(state.blockId, touch.clientX, touch.clientY)
+  }
+
+  cancelTouchContextMenu()
 }
 
 const handleContextMenuAction = async (actionId: string): Promise<void> => {
@@ -630,6 +742,7 @@ watch(
 
 onBeforeUnmount(() => {
   closeContextMenu()
+  cancelTouchContextMenu()
   textEditors.clear()
 })
 </script>
@@ -659,6 +772,10 @@ onBeforeUnmount(() => {
         @input="rememberSelection(block.id, $event)"
         @paste="void handlePaste($event, block.id)"
         @contextmenu="void openDesktopContextMenu($event, block.id)"
+        @touchstart="handleTouchContextMenuStart($event, block.id)"
+        @touchmove="cancelTouchContextMenu()"
+        @touchend="handleTouchContextMenuEnd($event)"
+        @touchcancel="cancelTouchContextMenu()"
       />
 
       <div
@@ -722,6 +839,10 @@ onBeforeUnmount(() => {
           @input="rememberSelection(block.id, $event)"
           @paste="void handlePaste($event, block.id)"
           @contextmenu="void openDesktopContextMenu($event, block.id)"
+          @touchstart="handleTouchContextMenuStart($event, block.id)"
+          @touchmove="cancelTouchContextMenu()"
+          @touchend="handleTouchContextMenuEnd($event)"
+          @touchcancel="cancelTouchContextMenu()"
         />
 
         <button
@@ -770,6 +891,7 @@ onBeforeUnmount(() => {
   line-height: 1.6;
   resize: none;
   outline: none;
+  -webkit-touch-callout: none;
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease;
@@ -828,9 +950,10 @@ onBeforeUnmount(() => {
     'SFMono-Regular',
     'Cascadia Mono',
     'Liberation Mono',
-    monospace;
+  monospace;
   font-size: 0.94rem;
   line-height: 1.55;
+  -webkit-touch-callout: none;
 }
 
 .interview-answer-composer__editor--code:focus {
