@@ -300,6 +300,15 @@ export const useAttachmentsStore = defineStore('attachments', () => {
     return uploadedAttachments
   }
 
+  const resetState = (): void => {
+    attachmentsByNote.value = {}
+    attachmentsById.value = {}
+    noteLoadingState.value = {}
+    noteErrors.value = {}
+    analysisLoadingState.value = {}
+    analysisErrors.value = {}
+  }
+
   return {
     attachmentsByNote,
     attachmentsById,
@@ -311,5 +320,6 @@ export const useAttachmentsStore = defineStore('attachments', () => {
     analyzeAttachment,
     analyzeAttachments,
     uploadAttachments,
+    resetState,
   }
 })

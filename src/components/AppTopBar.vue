@@ -3,17 +3,35 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { useContextualFooter } from '@/features/navigation/contextualFooter'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
-const pageTitle = computed(() => route.meta.title)
+const authStore = useAuthStore()
+const pageTitle = computed(() =>
+  authStore.isAuthenticated ? route.meta.title : 'Вход',
+)
 const { hasBackAction, isVisible, title, triggerBack } = useContextualFooter()
 </script>
 
 <template>
   <header class="top-bar">
-    <h1 class="top-bar__title">{{ pageTitle }}</h1>
+    <div class="top-bar__heading">
+      <h1 class="top-bar__title">{{ pageTitle }}</h1>
+    </div>
 
-    <div v-if="isVisible" class="top-bar__context">
+    <div v-if="authStore.isAuthenticated" class="top-bar__actions">
+      <span class="top-bar__user">{{ authStore.user?.username }}</span>
+      <button
+        type="button"
+        class="top-bar__logout"
+        :disabled="authStore.isSubmitting"
+        @click="void authStore.logout()"
+      >
+        Выйти
+      </button>
+    </div>
+
+    <div v-if="authStore.isAuthenticated && isVisible" class="top-bar__context">
       <button
         v-if="hasBackAction"
         class="top-bar__context-back"

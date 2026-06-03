@@ -5,6 +5,10 @@ export const API_BASE_URL =
 
 export const API_PATHS = {
   health: '/api/health',
+  authMe: '/api/auth/me',
+  authLogin: '/api/auth/login',
+  authRegister: '/api/auth/register',
+  authLogout: '/api/auth/logout',
   categories: '/api/categories',
   notes: '/api/notes',
   search: '/api/search',

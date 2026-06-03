@@ -19,6 +19,7 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/schema.sql ./server/schema.sql
+COPY --from=build /app/scripts ./scripts
 
 EXPOSE 3000
 

@@ -39,11 +39,19 @@ export const useAnalyticsStore = defineStore('analytics', () => {
     }
   }
 
+  const resetState = (): void => {
+    aiSnapshot.value = null
+    isLoading.value = false
+    hasLoaded.value = false
+    loadError.value = null
+  }
+
   return {
     aiSnapshot,
     isLoading,
     hasLoaded,
     loadError,
     loadAiAnalytics,
+    resetState,
   }
 })

@@ -10,6 +10,7 @@ import {
 
 interface FoundationUsageRow {
   foundation_key: string
+  user_id: string
   category_id: string | null
   note_id: string
   attachment_id: string | null
@@ -34,6 +35,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       SELECT
         id,
+        user_id,
         status,
         source_type,
         title,
@@ -45,6 +47,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         created_at,
         updated_at
       FROM interview_sessions
+      WHERE user_id = ?
       ORDER BY started_at DESC
       LIMIT 50
     `,
@@ -53,6 +56,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       SELECT
         id,
+        user_id,
         status,
         source_type,
         title,
@@ -64,7 +68,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         created_at,
         updated_at
       FROM interview_sessions
-      WHERE id = ?
+      WHERE user_id = ? AND id = ?
       LIMIT 1
     `,
   )
@@ -72,6 +76,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       SELECT
         id,
+        user_id,
         session_id,
         source_type,
         category_id,
@@ -83,7 +88,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         created_at,
         updated_at
       FROM interview_questions
-      WHERE session_id = ?
+      WHERE user_id = ? AND session_id = ?
       ORDER BY asked_at ASC
     `,
   )
@@ -91,6 +96,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       SELECT
         id,
+        user_id,
         session_id,
         source_type,
         category_id,
@@ -102,7 +108,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         created_at,
         updated_at
       FROM interview_questions
-      WHERE id = ?
+      WHERE user_id = ? AND id = ?
       LIMIT 1
     `,
   )
@@ -110,6 +116,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       SELECT
         id,
+        user_id,
         session_id,
         question_id,
         answer_text,
@@ -132,7 +139,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         created_at,
         updated_at
       FROM interview_answer_evaluations
-      WHERE session_id = ?
+      WHERE user_id = ? AND session_id = ?
       ORDER BY answered_at DESC
     `,
   )
@@ -140,6 +147,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       INSERT INTO interview_sessions (
         id,
+        user_id,
         status,
         source_type,
         title,
@@ -150,13 +158,14 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         completed_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   )
   const insertQuestionStatement = db.prepare(
     `
       INSERT INTO interview_questions (
         id,
+        user_id,
         session_id,
         source_type,
         category_id,
@@ -167,13 +176,14 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         asked_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   )
   const insertEvaluationStatement = db.prepare(
     `
       INSERT INTO interview_answer_evaluations (
         id,
+        user_id,
         session_id,
         question_id,
         answer_text,
@@ -195,7 +205,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         overall_summary,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   )
   const updateQuestionStatusStatement = db.prepare(
@@ -226,6 +236,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         category_id,
         note_ids_json
       FROM interview_questions
+      WHERE user_id = ?
       ORDER BY asked_at DESC
       LIMIT 120
     `,
@@ -234,6 +245,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `
       INSERT INTO interview_foundation_usage (
         foundation_key,
+        user_id,
         category_id,
         note_id,
         attachment_id,
@@ -244,8 +256,9 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         last_used_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
       ON CONFLICT(foundation_key) DO UPDATE SET
+        user_id = excluded.user_id,
         category_id = excluded.category_id,
         note_id = excluded.note_id,
         attachment_id = excluded.attachment_id,
@@ -257,22 +270,23 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     `,
   )
 
-  const getQuestionRows = (sessionId: string): QuestionRow[] =>
-    questionsBySessionStatement.all(sessionId) as QuestionRow[]
+  const getQuestionRows = (userId: string, sessionId: string): QuestionRow[] =>
+    questionsBySessionStatement.all(userId, sessionId) as QuestionRow[]
 
-  const getEvaluationRows = (sessionId: string): EvaluationRow[] =>
-    evaluationsBySessionStatement.all(sessionId) as EvaluationRow[]
+  const getEvaluationRows = (userId: string, sessionId: string): EvaluationRow[] =>
+    evaluationsBySessionStatement.all(userId, sessionId) as EvaluationRow[]
 
   const buildHistoryRecordFromSession = (sessionRow: SessionRow) =>
     buildInterviewHistoryRecord(
       sessionRow,
-      getQuestionRows(sessionRow.id),
-      getEvaluationRows(sessionRow.id),
+      getQuestionRows(sessionRow.user_id, sessionRow.id),
+      getEvaluationRows(sessionRow.user_id, sessionRow.id),
     )
 
   const runInsertSession = (sessionRow: SessionRow): void => {
     insertSessionStatement.run(
       sessionRow.id,
+      sessionRow.user_id,
       sessionRow.status,
       sessionRow.source_type,
       sessionRow.title,
@@ -289,6 +303,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
   const runInsertQuestion = (questionRow: QuestionRow): void => {
     insertQuestionStatement.run(
       questionRow.id,
+      questionRow.user_id,
       questionRow.session_id,
       questionRow.source_type,
       questionRow.category_id,
@@ -305,6 +320,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
   const runInsertEvaluation = (evaluationRow: EvaluationRow): void => {
     insertEvaluationStatement.run(
       evaluationRow.id,
+      evaluationRow.user_id,
       evaluationRow.session_id,
       evaluationRow.question_id,
       evaluationRow.answer_text,
@@ -330,39 +346,43 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
   }
 
   return {
-    listHistoryRecords: () =>
-      (sessionsStatement.all() as SessionRow[]).map(buildHistoryRecordFromSession),
+    listHistoryRecords: (userId: string) =>
+      (sessionsStatement.all(userId) as SessionRow[]).map(buildHistoryRecordFromSession),
 
-    getHistoryRecord: (sessionId: string) => {
-      const sessionRow = sessionByIdStatement.get(sessionId) as
+    getHistoryRecord: (userId: string, sessionId: string) => {
+      const sessionRow = sessionByIdStatement.get(userId, sessionId) as
         | SessionRow
         | undefined
 
       return sessionRow ? buildHistoryRecordFromSession(sessionRow) : null
     },
 
-    getSessionRow: (sessionId: string) =>
-      sessionByIdStatement.get(sessionId) as SessionRow | undefined,
+    getSessionRow: (userId: string, sessionId: string) =>
+      sessionByIdStatement.get(userId, sessionId) as SessionRow | undefined,
 
-    getQuestionRow: (questionId: string) =>
-      questionByIdStatement.get(questionId) as QuestionRow | undefined,
+    getQuestionRow: (userId: string, questionId: string) =>
+      questionByIdStatement.get(userId, questionId) as QuestionRow | undefined,
 
-    listQuestionIds: (sessionId: string) =>
-      getQuestionRows(sessionId).map((question) => question.id),
+    listQuestionIds: (userId: string, sessionId: string) =>
+      getQuestionRows(userId, sessionId).map((question) => question.id),
 
-    listRecentQuestionPrompts: () =>
-      recentQuestionPromptsStatement.all() as RecentQuestionPromptRow[],
+    listRecentQuestionPrompts: (userId: string) =>
+      recentQuestionPromptsStatement.all(userId) as RecentQuestionPromptRow[],
 
-    getFoundationUsageByKeys: (foundationKeys: string[]) => {
+    getFoundationUsageByKeys: (userId: string, foundationKeys: string[]) => {
       if (foundationKeys.length === 0) {
         return new Map<string, FoundationUsageRow>()
       }
 
       const placeholders = foundationKeys.map(() => '?').join(', ')
+      const scopedFoundationKeys = foundationKeys.map(
+        (foundationKey) => `${userId}::${foundationKey}`,
+      )
       const statement = db.prepare(
         `
           SELECT
             foundation_key,
+            user_id,
             category_id,
             note_id,
             attachment_id,
@@ -379,8 +399,8 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
       )
 
       return new Map(
-        (statement.all(...foundationKeys) as FoundationUsageRow[]).map((row) => [
-          row.foundation_key,
+        (statement.all(...scopedFoundationKeys) as FoundationUsageRow[]).map((row) => [
+          row.foundation_key.replace(`${userId}::`, ''),
           row,
         ]),
       )
@@ -436,6 +456,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
     },
 
     markFoundationUsage: (
+      userId: string,
       foundations: Array<{
         foundationKey: string
         categoryId: string | null
@@ -449,7 +470,8 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
       const transaction = db.transaction(() => {
         for (const foundation of foundations) {
           upsertFoundationUsageStatement.run(
-            foundation.foundationKey,
+            `${userId}::${foundation.foundationKey}`,
+            userId,
             foundation.categoryId,
             foundation.noteId,
             foundation.attachmentId,

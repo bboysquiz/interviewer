@@ -1,5 +1,6 @@
 export * from './models'
 export * from './analytics'
+export * from './auth'
 export * from './interviewApi'
 export * from './navigation'
 export * from './search'

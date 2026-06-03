@@ -197,12 +197,54 @@ code {
   background: linear-gradient(180deg, rgba(255, 250, 243, 0.96), rgba(255, 250, 243, 0.8));
 }
 
+.top-bar__heading {
+  min-width: 0;
+}
+
 .top-bar__title {
   margin: 0;
   font-family: 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
   font-size: 1.58rem;
   line-height: 1.05;
   letter-spacing: -0.04em;
+}
+
+.top-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.72rem;
+  margin-top: 0.92rem;
+}
+
+.top-bar__user {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.3rem;
+  padding: 0.38rem 0.74rem;
+  border-radius: 999px;
+  background: rgba(35, 28, 21, 0.06);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.top-bar__logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.92rem;
+  border: 1px solid rgba(180, 154, 123, 0.24);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.top-bar__logout:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 .top-bar__context {
@@ -774,6 +816,11 @@ code {
 
   .top-bar__context {
     flex-shrink: 0;
+    margin-top: 0;
+    align-self: center;
+  }
+
+  .top-bar__actions {
     margin-top: 0;
     align-self: center;
   }

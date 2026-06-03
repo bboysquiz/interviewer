@@ -2,6 +2,7 @@ import { parseStringArray } from '../lib/json.js'
 
 export interface SessionRow {
   id: string
+  user_id: string
   status: string
   source_type: string
   title: string
@@ -16,6 +17,7 @@ export interface SessionRow {
 
 export interface QuestionRow {
   id: string
+  user_id: string
   session_id: string
   source_type: string
   category_id: string | null
@@ -30,6 +32,7 @@ export interface QuestionRow {
 
 export interface EvaluationRow {
   id: string
+  user_id: string
   session_id: string
   question_id: string
   answer_text: string

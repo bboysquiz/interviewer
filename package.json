@@ -11,6 +11,7 @@
     "build:client": "vue-tsc -b && vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "preview": "vite preview",
+    "backup:data": "node scripts/backup-data.mjs",
     "start": "node server/dist/index.js",
     "start:server": "node server/dist/index.js"
   },

@@ -53,6 +53,7 @@ interface ContextFragment {
 }
 
 interface ResolveInterviewContextInput {
+  userId: string
   sourceType: AiInterviewSourceType
   categoryId: string | null
   noteIds: string[]
@@ -607,7 +608,7 @@ export const resolveInterviewKnowledgeBaseContext = (
     `
       SELECT id, name
       FROM categories
-      WHERE id = ?
+      WHERE user_id = ? AND id = ?
       LIMIT 1
     `,
   )
@@ -623,14 +624,15 @@ export const resolveInterviewKnowledgeBaseContext = (
         n.updated_at
       FROM notes n
       INNER JOIN categories c ON c.id = n.category_id
-      WHERE n.category_id = ?
+      WHERE n.user_id = ?
+        AND n.category_id = ?
       ORDER BY n.updated_at DESC, n.created_at DESC
       LIMIT 24
     `,
   )
 
   const category = input.categoryId
-    ? ((categoryStatement.get(input.categoryId) as CategoryRow | undefined) ??
+    ? ((categoryStatement.get(input.userId, input.categoryId) as CategoryRow | undefined) ??
       null)
     : null
 
@@ -647,7 +649,7 @@ export const resolveInterviewKnowledgeBaseContext = (
     const placeholders = buildListPlaceholders(requestedNoteIds.length)
     const notesByIdsStatement = db.prepare(
       `
-        SELECT
+          SELECT
           n.id,
           n.category_id,
           c.name AS category_name,
@@ -657,12 +659,13 @@ export const resolveInterviewKnowledgeBaseContext = (
           n.updated_at
         FROM notes n
         INNER JOIN categories c ON c.id = n.category_id
-        WHERE n.id IN (${placeholders})
+        WHERE n.user_id = ?
+          AND n.id IN (${placeholders})
         ORDER BY n.updated_at DESC, n.created_at DESC
       `,
     )
 
-    notes = notesByIdsStatement.all(...requestedNoteIds) as NoteRow[]
+    notes = notesByIdsStatement.all(input.userId, ...requestedNoteIds) as NoteRow[]
 
     if (notes.length !== requestedNoteIds.length) {
       throw new AiServiceError(
@@ -674,7 +677,7 @@ export const resolveInterviewKnowledgeBaseContext = (
       )
     }
   } else if (input.categoryId) {
-    notes = notesByCategoryStatement.all(input.categoryId) as NoteRow[]
+    notes = notesByCategoryStatement.all(input.userId, input.categoryId) as NoteRow[]
   }
 
   if (notes.length === 0) {
@@ -736,11 +739,13 @@ export const resolveInterviewKnowledgeBaseContext = (
         image_description,
         key_terms_json
       FROM attachments
-      WHERE note_id IN (${notePlaceholders})
+      WHERE user_id = ?
+        AND note_id IN (${notePlaceholders})
       ORDER BY created_at ASC
     `,
   )
   const attachmentRows = attachmentsStatement.all(
+    input.userId,
     ...notes.map((note) => note.id),
   ) as AttachmentRow[]
   const attachmentsById = new Map(

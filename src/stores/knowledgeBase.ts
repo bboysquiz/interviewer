@@ -8,84 +8,11 @@ import {
 } from '@/services/client/knowledgeBaseApi'
 import type { Category } from '@/types'
 
-const fallbackCategories: Category[] = [
-  {
-    id: 'javascript',
-    createdAt: '2026-04-02T00:00:00.000Z',
-    updatedAt: '2026-04-02T00:00:00.000Z',
-    slug: 'javascript',
-    name: 'JavaScript',
-    description: 'Язык, event loop, async-паттерны и ключевые концепции.',
-    color: null,
-    icon: null,
-    sortOrder: 0,
-    noteIds: [],
-    noteCount: 0,
-    attachmentCount: 0,
-  },
-  {
-    id: 'vue',
-    createdAt: '2026-04-02T00:00:00.000Z',
-    updatedAt: '2026-04-02T00:00:00.000Z',
-    slug: 'vue',
-    name: 'Vue',
-    description: 'Composition API, компоненты, reactivity и архитектурные заметки.',
-    color: null,
-    icon: null,
-    sortOrder: 0,
-    noteIds: [],
-    noteCount: 0,
-    attachmentCount: 0,
-  },
-  {
-    id: 'git',
-    createdAt: '2026-04-02T00:00:00.000Z',
-    updatedAt: '2026-04-02T00:00:00.000Z',
-    slug: 'git',
-    name: 'Git',
-    description: 'Команды, ветвление, rebase и сценарии для собеседований.',
-    color: null,
-    icon: null,
-    sortOrder: 0,
-    noteIds: [],
-    noteCount: 0,
-    attachmentCount: 0,
-  },
-  {
-    id: 'css',
-    createdAt: '2026-04-02T00:00:00.000Z',
-    updatedAt: '2026-04-02T00:00:00.000Z',
-    slug: 'css',
-    name: 'CSS',
-    description: 'Layout, каскад, адаптивность и типовые UI-задачи.',
-    color: null,
-    icon: null,
-    sortOrder: 0,
-    noteIds: [],
-    noteCount: 0,
-    attachmentCount: 0,
-  },
-  {
-    id: 'html',
-    createdAt: '2026-04-02T00:00:00.000Z',
-    updatedAt: '2026-04-02T00:00:00.000Z',
-    slug: 'html',
-    name: 'HTML',
-    description: 'Семантика, доступность и структура интерфейсов.',
-    color: null,
-    icon: null,
-    sortOrder: 0,
-    noteIds: [],
-    noteCount: 0,
-    attachmentCount: 0,
-  },
-]
-
 const sortCategories = (value: Category[]): Category[] =>
   [...value].sort((left, right) => left.name.localeCompare(right.name, 'ru'))
 
 export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
-  const categories = ref<Category[]>(sortCategories(fallbackCategories))
+  const categories = ref<Category[]>([])
   const isLoading = ref(false)
   const hasLoaded = ref(false)
   const loadError = ref<string | null>(null)
@@ -141,6 +68,13 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
     )
   }
 
+  const resetState = (): void => {
+    categories.value = []
+    isLoading.value = false
+    hasLoaded.value = false
+    loadError.value = null
+  }
+
   return {
     categories,
     isLoading,
@@ -151,5 +85,6 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
     createCategory,
     updateCategory,
     deleteCategory,
+    resetState,
   }
 })

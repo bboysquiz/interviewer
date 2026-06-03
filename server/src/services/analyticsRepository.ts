@@ -23,6 +23,7 @@ export type AiAnalyticsChannel = 'text' | 'image'
 
 interface AiUsageEventRow {
   id: string
+  user_id: string
   task: AiAnalyticsTask
   provider: string
   channel: AiAnalyticsChannel
@@ -44,6 +45,7 @@ interface AttachmentStatusRow {
 
 export interface RecordAiUsageEventInput {
   id?: string
+  userId: string
   task: AiAnalyticsTask
   provider: string
   model: string
@@ -167,6 +169,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
     `
       INSERT INTO ai_usage_events (
         id,
+        user_id,
         task,
         provider,
         channel,
@@ -181,13 +184,14 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
         occurred_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
     `,
   )
   const usageEventsStatement = db.prepare(
     `
       SELECT
         id,
+        user_id,
         task,
         provider,
         channel,
@@ -210,6 +214,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
         processing_status,
         COUNT(*) AS count
       FROM attachments
+      WHERE user_id = ?
       GROUP BY processing_status
     `,
   )
@@ -220,6 +225,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
 
       insertUsageEventStatement.run(
         input.id ?? createId(),
+        input.userId,
         input.task,
         input.provider,
         toChannelFromTask(input.task),
@@ -236,7 +242,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
       )
     },
 
-    getAiAnalyticsSnapshot: (): AiAnalyticsSnapshot => {
+    getAiAnalyticsSnapshot: (userId: string): AiAnalyticsSnapshot => {
       const configuredProviders = buildConfiguredProviders()
       const windowStartDate = new Date(
         Date.now() - AI_ANALYTICS_WINDOW_HOURS * 60 * 60 * 1000,
@@ -244,7 +250,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
       const windowStart = windowStartDate.toISOString()
       const usageRows = usageEventsStatement.all() as AiUsageEventRow[]
       const attachmentStatusRows =
-        attachmentStatusesStatement.all() as AttachmentStatusRow[]
+        attachmentStatusesStatement.all(userId) as AttachmentStatusRow[]
       const runtimeStatuses = getAiProviderRuntimeStatuses()
       const runtimeStatusByChannel = new Map(
         runtimeStatuses.map((status) => [
@@ -293,7 +299,7 @@ export const createAnalyticsRepository = (db: SqliteDatabase) => {
         }
       }
 
-      for (const row of usageRows) {
+      for (const row of usageRows.filter((event) => event.user_id === userId)) {
         if (row.status !== 'completed') {
           continue
         }

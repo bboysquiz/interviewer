@@ -294,6 +294,15 @@ const isRetryableAiErrorForTask = (task: AiTask, error: unknown): boolean => {
   }
 
   if (
+    task === 'image_analysis' &&
+    error instanceof AiServiceError &&
+    (error.code === 'ai_invalid_response' ||
+      error.code === 'ai_validation_error')
+  ) {
+    return true
+  }
+
+  if (
     task === 'note_study_topic_suggestions' &&
     error instanceof AiServiceError &&
     (error.code === 'ai_invalid_response' ||

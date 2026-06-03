@@ -7,8 +7,8 @@ export const createAnalyticsRouter = (db: SqliteDatabase): Router => {
   const router = Router()
   const repository = createAnalyticsRepository(db)
 
-  router.get('/ai', (_request, response) => {
-    response.json(repository.getAiAnalyticsSnapshot())
+  router.get('/ai', (request, response) => {
+    response.json(repository.getAiAnalyticsSnapshot(request.authUser!.id))
   })
 
   return router

@@ -133,3 +133,31 @@ git push origin main
 - после redeploy данные не пропадают.
 
 Если данные пропадают после redeploy, значит приложение пишет не в `/data`.
+
+## 9. Backup перед обновлением
+
+Перед выкатыванием изменений, которые меняют схему базы, зайди в консоль/терминал приложения в Amvera и выполни:
+
+```bash
+npm run backup:data
+```
+
+Скрипт сохраняет:
+
+- SQLite backup через безопасный API `better-sqlite3.backup()`;
+- копию `/data/uploads`;
+- `manifest.json` с `sha256`, размерами, счетчиками таблиц, статусами attachments и `PRAGMA integrity_check`;
+- архив `/data/backups/manual-YYYY-MM-DD_HH-MM-SS.tar.gz`, если в контейнере доступен `tar`.
+
+Backup по умолчанию появляется в:
+
+```bash
+/data/backups/manual-YYYY-MM-DD_HH-MM-SS
+```
+
+После выполнения проверь в выводе:
+
+- `database.integrity` содержит `ok`;
+- `database.counts.attachments` совпадает с ожидаемым числом скриншотов;
+- `uploads.fileCount` не меньше числа загруженных файлов;
+- `archive.created` равен `true` или, если архив не создался, сама папка backup все равно сохранена.

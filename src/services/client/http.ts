@@ -1,5 +1,26 @@
 import { API_BASE_URL } from '@/services/api'
 
+export class ApiRequestError extends Error {
+  status: number
+  code: string | null
+  details: unknown
+
+  constructor(
+    message: string,
+    options: {
+      status: number
+      code?: string | null
+      details?: unknown
+    },
+  ) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = options.status
+    this.code = options.code ?? null
+    this.details = options.details
+  }
+}
+
 export const buildApiUrl = (path: string): string => {
   if (!API_BASE_URL) {
     return path
@@ -27,6 +48,7 @@ export const requestJson = async <T>(
   try {
     response = await fetch(buildApiUrl(path), {
       ...init,
+      credentials: 'include',
       headers,
     })
   } catch (error) {
@@ -41,6 +63,8 @@ export const requestJson = async <T>(
 
   if (!response.ok) {
     let errorMessage = `Request failed with status ${response.status}`
+    let errorCode: string | null = null
+    let errorDetails: unknown = undefined
     let responseText = ''
 
     try {
@@ -60,11 +84,18 @@ export const requestJson = async <T>(
             errorMessage = 'Сервер вернул неожиданный HTML-ответ вместо JSON.'
           }
         } else {
-          const payload = JSON.parse(responseText) as { message?: string }
+          const payload = JSON.parse(responseText) as {
+            message?: string
+            code?: string
+            details?: unknown
+          }
 
           if (payload.message) {
             errorMessage = payload.message
           }
+
+          errorCode = payload.code ?? null
+          errorDetails = payload.details
         }
       }
     } catch {
@@ -79,7 +110,11 @@ export const requestJson = async <T>(
       }
     }
 
-    throw new Error(errorMessage)
+    throw new ApiRequestError(errorMessage, {
+      status: response.status,
+      code: errorCode,
+      details: errorDetails,
+    })
   }
 
   if (response.status === 204) {

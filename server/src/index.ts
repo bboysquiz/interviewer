@@ -12,6 +12,7 @@ import {
   SERVER_ROOT,
   UPLOADS_DIR,
 } from './config.js'
+import { createAuthRouter, createRequireAuthMiddleware } from './auth.js'
 import { createDatabase } from './db.js'
 import { createAttachmentsRouter } from './routes/attachments.js'
 import { createAnalyticsRouter } from './routes/analytics.js'
@@ -22,6 +23,7 @@ import { createSearchRouter } from './routes/search.js'
 
 const db = createDatabase()
 const app = express()
+app.set('trust proxy', 1)
 const repoRoot = path.resolve(SERVER_ROOT, '..')
 const clientDistDir = path.join(repoRoot, 'dist')
 const clientIndexPath = path.join(clientDistDir, 'index.html')
@@ -30,6 +32,7 @@ const hasClientBuild = fs.existsSync(clientIndexPath)
 app.use(
   cors({
     origin: CLIENT_ORIGIN,
+    credentials: true,
   }),
 )
 app.use(express.json({ limit: '2mb' }))
@@ -45,6 +48,8 @@ app.get('/api/health', (_request, response) => {
   })
 })
 
+app.use('/api/auth', createAuthRouter(db))
+app.use('/api', createRequireAuthMiddleware(db))
 app.use('/api/categories', createCategoriesRouter(db))
 app.use('/api/notes', createNotesRouter(db))
 app.use('/api/attachments', createAttachmentsRouter(db))
@@ -80,6 +85,7 @@ app.use(
     response: express.Response,
     _next: express.NextFunction,
   ) => {
+    console.error('Unhandled backend error.', error)
     response.status(error.status ?? 500).json({
       message: error.message || 'Unexpected server error.',
     })

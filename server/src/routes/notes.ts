@@ -22,6 +22,7 @@ import { buildStudyTopicSuggestions } from '../services/noteStudySuggestions.js'
 
 interface NoteRow {
   id: string
+  user_id: string
   category_id: string
   title: string
   content: string
@@ -79,16 +80,16 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
   }
 
   const categoryExistsStatement = db.prepare(
-    'SELECT id FROM categories WHERE id = ? LIMIT 1',
+    'SELECT id FROM categories WHERE user_id = ? AND id = ? LIMIT 1',
   )
   const categoryByIdStatement = db.prepare(
-    'SELECT id, name FROM categories WHERE id = ? LIMIT 1',
+    'SELECT id, name FROM categories WHERE user_id = ? AND id = ? LIMIT 1',
   )
   const attachmentRowsStatement = db.prepare(
     `
       SELECT id, stored_file_name
       FROM attachments
-      WHERE note_id = ?
+      WHERE user_id = ? AND note_id = ?
       ORDER BY created_at ASC
     `,
   )
@@ -100,7 +101,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         extracted_text,
         image_description
       FROM attachments
-      WHERE note_id = ?
+      WHERE user_id = ? AND note_id = ?
       ORDER BY created_at ASC
     `,
   )
@@ -108,6 +109,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     `
       SELECT
         notes.id,
+        notes.user_id,
         notes.category_id,
         notes.title,
         notes.content,
@@ -117,6 +119,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         categories.name AS category_name
       FROM notes
       LEFT JOIN categories ON categories.id = notes.category_id
+      WHERE notes.user_id = ?
       ORDER BY notes.updated_at DESC, notes.created_at DESC
     `,
   )
@@ -129,6 +132,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         image_description,
         key_terms_json
       FROM attachments
+      WHERE user_id = ?
       ORDER BY created_at ASC
     `,
   )
@@ -139,6 +143,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     `
       SELECT
         id,
+        user_id,
         category_id,
         title,
         content,
@@ -146,7 +151,8 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         created_at,
         updated_at
       FROM notes
-      WHERE (? IS NULL OR category_id = ?)
+      WHERE user_id = ?
+        AND (? IS NULL OR category_id = ?)
       ORDER BY updated_at DESC, created_at DESC
     `,
   )
@@ -154,6 +160,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     `
       SELECT
         id,
+        user_id,
         category_id,
         title,
         content,
@@ -161,13 +168,14 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         created_at,
         updated_at
       FROM notes
-      WHERE id = ?
+      WHERE user_id = ? AND id = ?
     `,
   )
   const insertStatement = db.prepare(
     `
       INSERT INTO notes (
         id,
+        user_id,
         category_id,
         title,
         content,
@@ -179,7 +187,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
         last_reviewed_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'mixed_blocks', NULL, '[]', 'active', NULL, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'mixed_blocks', NULL, '[]', 'active', NULL, ?, ?)
     `,
   )
   const updateStatement = db.prepare(
@@ -194,10 +202,10 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       WHERE id = ?
     `,
   )
-  const deleteStatement = db.prepare('DELETE FROM notes WHERE id = ?')
+  const deleteStatement = db.prepare('DELETE FROM notes WHERE user_id = ? AND id = ?')
 
   const mapNote = (row: NoteRow) => {
-    const attachmentRows = attachmentRowsStatement.all(row.id) as Array<{
+    const attachmentRows = attachmentRowsStatement.all(row.user_id, row.id) as Array<{
       id: string
       stored_file_name: string
     }>
@@ -223,23 +231,24 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     }
   }
 
-  const getNoteById = (noteId: string) => {
-    const row = byIdStatement.get(noteId) as NoteRow | undefined
+  const getNoteById = (userId: string, noteId: string) => {
+    const row = byIdStatement.get(userId, noteId) as NoteRow | undefined
     return row ? mapNote(row) : null
   }
 
   router.get('/', (request, response) => {
+    const userId = request.authUser!.id
     const categoryId =
       typeof request.query.categoryId === 'string'
         ? request.query.categoryId
         : null
 
-    const rows = listStatement.all(categoryId, categoryId) as NoteRow[]
+    const rows = listStatement.all(userId, categoryId, categoryId) as NoteRow[]
     response.json(rows.map(mapNote))
   })
 
   router.get('/:id', (request, response) => {
-    const note = getNoteById(request.params.id)
+    const note = getNoteById(request.authUser!.id, request.params.id)
 
     if (!note) {
       response.status(404).json({
@@ -252,6 +261,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
   })
 
   router.post('/', (request, response) => {
+    const userId = request.authUser!.id
     const body = request.body as Record<string, unknown>
     const categoryId = coerceString(body.categoryId)
     const title = coerceString(body.title)
@@ -280,7 +290,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       return
     }
 
-    const category = categoryExistsStatement.get(categoryId) as
+    const category = categoryExistsStatement.get(userId, categoryId) as
       | { id: string }
       | undefined
 
@@ -296,6 +306,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
 
     insertStatement.run(
       id,
+      userId,
       categoryId,
       title,
       rawText,
@@ -305,18 +316,20 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     )
 
     replaceNoteContentChunks(db, {
+      userId,
       noteId: id,
       categoryId,
       title,
       content: rawText,
     })
 
-    response.status(201).json(getNoteById(id))
+    response.status(201).json(getNoteById(userId, id))
   })
 
   router.patch('/:id', (request, response) => {
+    const userId = request.authUser!.id
     const noteId = request.params.id
-    const existing = byIdStatement.get(noteId) as NoteRow | undefined
+    const existing = byIdStatement.get(userId, noteId) as NoteRow | undefined
 
     if (!existing) {
       response.status(404).json({
@@ -326,7 +339,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
     }
 
     const body = request.body as Record<string, unknown>
-    const currentAttachmentRows = attachmentRowsStatement.all(noteId) as Array<{
+    const currentAttachmentRows = attachmentRowsStatement.all(userId, noteId) as Array<{
       id: string
       stored_file_name: string
     }>
@@ -391,6 +404,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       )
 
       replaceNoteContentChunks(db, {
+        userId: existing.user_id,
         noteId,
         categoryId: existing.category_id,
         title: nextTitle,
@@ -400,12 +414,13 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
 
     saveNoteTransaction()
 
-    response.json(getNoteById(noteId))
+    response.json(getNoteById(userId, noteId))
   })
 
   router.post('/:id/organize', async (request, response) => {
+    const userId = request.authUser!.id
     const noteId = request.params.id
-    const existing = byIdStatement.get(noteId) as NoteRow | undefined
+    const existing = byIdStatement.get(userId, noteId) as NoteRow | undefined
 
     if (!existing) {
       response.status(404).json({
@@ -414,7 +429,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       return
     }
 
-    const attachmentRows = attachmentDetailsStatement.all(noteId) as Array<{
+    const attachmentRows = attachmentDetailsStatement.all(userId, noteId) as Array<{
       id: string
       original_file_name: string | null
       extracted_text: string | null
@@ -436,7 +451,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
           .filter(Boolean)
           .slice(0, 24)
       : []
-    const categoryRow = categoryByIdStatement.get(existing.category_id) as
+    const categoryRow = categoryByIdStatement.get(userId, existing.category_id) as
       | { id: string; name?: string }
       | undefined
 
@@ -480,6 +495,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       )
 
       replaceNoteContentChunks(db, {
+        userId: existing.user_id,
         noteId,
         categoryId: existing.category_id,
         title: existing.title,
@@ -488,6 +504,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
 
       if (!organized.model.startsWith('local:')) {
         analyticsRepository.recordAiUsageEvent({
+          userId: existing.user_id,
           task: 'note_organization',
           provider: parseProviderFromModel(organized.model),
           model: organized.model,
@@ -502,7 +519,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       }
 
       response.json({
-        note: getNoteById(noteId),
+        note: getNoteById(userId, noteId),
         organized: {
           sectionCount: organized.sectionCount,
           mode,
@@ -540,8 +557,9 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
   })
 
   router.post('/:id/study-topics', async (request, response) => {
+    const userId = request.authUser!.id
     const noteId = request.params.id
-    const existing = byIdStatement.get(noteId) as NoteRow | undefined
+    const existing = byIdStatement.get(userId, noteId) as NoteRow | undefined
 
     if (!existing) {
       response.status(404).json({
@@ -560,8 +578,8 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       : []
 
     try {
-      const notes = allNotesWithCategoryStatement.all() as NoteKnowledgeRow[]
-      const attachmentRows = allKnowledgeAttachmentsStatement.all() as NoteKnowledgeAttachmentRow[]
+      const notes = allNotesWithCategoryStatement.all(userId) as NoteKnowledgeRow[]
+      const attachmentRows = allKnowledgeAttachmentsStatement.all(userId) as NoteKnowledgeAttachmentRow[]
       const attachmentsByNoteId = new Map<string, NoteKnowledgeAttachmentRow[]>()
 
       for (const attachment of attachmentRows) {
@@ -591,6 +609,7 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
       const updatedAt = nowIso()
 
       analyticsRepository.recordAiUsageEvent({
+        userId: existing.user_id,
         task: 'note_study_topic_suggestions',
         provider: parseProviderFromModel(suggested.model),
         model: suggested.model,
@@ -638,13 +657,15 @@ export const createNotesRouter = (db: SqliteDatabase): Router => {
   })
 
   router.delete('/:id', (request, response) => {
+    const userId = request.authUser!.id
     const attachmentRows = attachmentRowsStatement.all(
+      userId,
       request.params.id,
     ) as Array<{
       id: string
       stored_file_name: string
     }>
-    const result = deleteStatement.run(request.params.id)
+    const result = deleteStatement.run(userId, request.params.id)
 
     if (result.changes === 0) {
       response.status(404).json({

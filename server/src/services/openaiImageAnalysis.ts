@@ -12,6 +12,7 @@ import { AiServiceError } from './ai/errors.js'
 
 interface AttachmentAnalysisRow {
   id: string
+  user_id: string
   note_id: string
   category_id: string
   stored_file_name: string
@@ -36,6 +37,7 @@ export interface AttachmentAnalysisExecution {
 const attachmentByIdStatementSql = `
   SELECT
     id,
+    user_id,
     note_id,
     category_id,
     stored_file_name,
@@ -179,6 +181,7 @@ export const analyzeAttachmentWithOpenAI = async (
     )
 
     replaceAttachmentChunks(db, {
+      userId: attachment.user_id,
       attachmentId,
       noteId: attachment.note_id,
       categoryId: attachment.category_id,
@@ -192,6 +195,7 @@ export const analyzeAttachmentWithOpenAI = async (
       provider: parseProviderFromModel(analysis.model),
       model: analysis.model,
       requestId: analysis.requestId,
+      userId: attachment.user_id,
       categoryId: attachment.category_id,
       noteId: attachment.note_id,
       inputTokens: analysis.usage?.inputTokens ?? null,

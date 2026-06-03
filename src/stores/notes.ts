@@ -182,6 +182,15 @@ export const useNotesStore = defineStore('notes', () => {
     await useKnowledgeBaseStore().loadCategories()
   }
 
+  const resetState = (): void => {
+    notesByCategory.value = {}
+    notesById.value = {}
+    categoryLoadingState.value = {}
+    noteLoadingState.value = {}
+    categoryErrors.value = {}
+    noteErrors.value = {}
+  }
+
   return {
     notesByCategory,
     notesById,
@@ -196,5 +205,6 @@ export const useNotesStore = defineStore('notes', () => {
     organizeNote,
     suggestStudyTopics,
     deleteNote,
+    resetState,
   }
 })

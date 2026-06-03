@@ -18,6 +18,7 @@ import { analyzeAttachmentWithOpenAI } from '../services/openaiImageAnalysis.js'
 
 interface AttachmentRow {
   id: string
+  user_id: string
   note_id: string
   category_id: string
   type: 'image'
@@ -83,12 +84,13 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
   const router = Router()
 
   const noteLookupStatement = db.prepare(
-    'SELECT id, category_id FROM notes WHERE id = ? LIMIT 1',
+    'SELECT id, user_id, category_id FROM notes WHERE user_id = ? AND id = ? LIMIT 1',
   )
   const attachmentByIdStatement = db.prepare(
     `
       SELECT
         id,
+        user_id,
         note_id,
         category_id,
         type,
@@ -110,13 +112,14 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
         created_at,
         updated_at
       FROM attachments
-      WHERE id = ?
+      WHERE user_id = ? AND id = ?
     `,
   )
   const listStatement = db.prepare(
     `
       SELECT
         id,
+        user_id,
         note_id,
         category_id,
         type,
@@ -138,20 +141,22 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
         created_at,
         updated_at
       FROM attachments
-      WHERE (? IS NULL OR note_id = ?)
+      WHERE user_id = ?
+        AND (? IS NULL OR note_id = ?)
         AND (? IS NULL OR category_id = ?)
       ORDER BY created_at DESC
     `,
   )
 
-  const getAttachmentById = (attachmentId: string) => {
-    const row = attachmentByIdStatement.get(attachmentId) as
+  const getAttachmentById = (userId: string, attachmentId: string) => {
+    const row = attachmentByIdStatement.get(userId, attachmentId) as
       | AttachmentRow
       | undefined
     return row ? buildAttachment(row) : null
   }
 
   router.get('/', (request, response) => {
+    const userId = request.authUser!.id
     const noteId =
       typeof request.query.noteId === 'string' ? request.query.noteId : null
     const categoryId =
@@ -160,6 +165,7 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
         : null
 
     const rows = listStatement.all(
+      userId,
       noteId,
       noteId,
       categoryId,
@@ -170,6 +176,7 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
   })
 
   router.post('/', upload.single('file'), (request, response) => {
+    const userId = request.authUser!.id
     const file = request.file
     const noteId = coerceString((request.body as Record<string, unknown>).noteId)
 
@@ -180,8 +187,8 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
       return
     }
 
-    const note = noteLookupStatement.get(noteId) as
-      | { id: string; category_id: string }
+    const note = noteLookupStatement.get(userId, noteId) as
+      | { id: string; user_id: string; category_id: string }
       | undefined
 
     if (!note) {
@@ -211,6 +218,7 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
       `
         INSERT INTO attachments (
           id,
+          user_id,
           note_id,
           category_id,
           type,
@@ -231,10 +239,11 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
           analysis_request_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
       `,
     ).run(
       id,
+      userId,
       note.id,
       note.category_id,
       file.originalname,
@@ -254,6 +263,7 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
     )
 
     replaceAttachmentChunks(db, {
+      userId,
       attachmentId: id,
       noteId: note.id,
       categoryId: note.category_id,
@@ -262,14 +272,15 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
       keyTerms,
     })
 
-    const attachment = getAttachmentById(id)
+    const attachment = getAttachmentById(userId, id)
 
     response.status(201).json(attachment)
   })
 
   router.patch('/:id/processing', (request, response) => {
+    const userId = request.authUser!.id
     const attachmentId = request.params.id
-    const attachment = attachmentByIdStatement.get(attachmentId) as
+    const attachment = attachmentByIdStatement.get(userId, attachmentId) as
       | AttachmentRow
       | undefined
 
@@ -338,6 +349,7 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
     )
 
     replaceAttachmentChunks(db, {
+      userId: attachment.user_id,
       attachmentId,
       noteId: attachment.note_id,
       categoryId: attachment.category_id,
@@ -346,20 +358,32 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
       keyTerms,
     })
 
-    const updated = getAttachmentById(attachmentId)
+    const updated = getAttachmentById(userId, attachmentId)
     response.json(updated)
   })
 
   router.post('/:id/analyze', async (request, response) => {
+    const userId = request.authUser!.id
     const attachmentId = request.params.id
     const body = request.body as Record<string, unknown>
     const force = body.force === true
+    const existingAttachment = attachmentByIdStatement.get(
+      userId,
+      attachmentId,
+    ) as AttachmentRow | undefined
+
+    if (!existingAttachment) {
+      response.status(404).json({
+        message: `Attachment "${attachmentId}" was not found.`,
+      })
+      return
+    }
 
     try {
       const analysis = await analyzeAttachmentWithOpenAI(db, attachmentId, {
         force,
       })
-      const attachment = getAttachmentById(attachmentId)
+      const attachment = getAttachmentById(userId, attachmentId)
 
       response.json({
         attachment,

@@ -100,6 +100,16 @@ export const useInterviewHistoryStore = defineStore('interview-history', () => {
     }
   }
 
+  const resetState = (): void => {
+    records.value = []
+    recordsBySessionId.value = {}
+    isLoading.value = false
+    hasLoaded.value = false
+    loadError.value = null
+    detailLoadingState.value = {}
+    detailErrors.value = {}
+  }
+
   return {
     records,
     recordsBySessionId,
@@ -111,5 +121,6 @@ export const useInterviewHistoryStore = defineStore('interview-history', () => {
     totalSessions,
     loadHistory,
     loadHistoryRecord,
+    resetState,
   }
 })

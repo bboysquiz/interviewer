@@ -136,6 +136,7 @@ export const splitTextIntoChunks = (value: string): SplitChunk[] => {
 type SqliteDatabase = Database.Database
 
 interface NoteChunkPayload {
+  userId: string
   noteId: string
   categoryId: string
   title: string
@@ -143,6 +144,7 @@ interface NoteChunkPayload {
 }
 
 interface AttachmentChunkPayload {
+  userId: string
   attachmentId: string
   noteId: string
   categoryId: string
@@ -167,6 +169,7 @@ export const replaceNoteContentChunks = (
     `
       INSERT INTO note_chunks (
         id,
+        user_id,
         note_id,
         category_id,
         attachment_id,
@@ -179,7 +182,7 @@ export const replaceNoteContentChunks = (
         end_offset,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   )
 
@@ -193,6 +196,7 @@ export const replaceNoteContentChunks = (
     if (normalizedTitle) {
       insertStatement.run(
         createId(),
+        payload.userId,
         payload.noteId,
         payload.categoryId,
         'note_title',
@@ -210,6 +214,7 @@ export const replaceNoteContentChunks = (
     for (const chunk of splitTextIntoChunks(payload.content)) {
       insertStatement.run(
         createId(),
+        payload.userId,
         payload.noteId,
         payload.categoryId,
         'note_content',
@@ -243,6 +248,7 @@ export const replaceAttachmentChunks = (
     `
       INSERT INTO note_chunks (
         id,
+        user_id,
         note_id,
         category_id,
         attachment_id,
@@ -255,7 +261,7 @@ export const replaceAttachmentChunks = (
         end_offset,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   )
 
@@ -275,6 +281,7 @@ export const replaceAttachmentChunks = (
       const normalizedSearchText = toSearchText(chunk.content)
       insertStatement.run(
         createId(),
+        payload.userId,
         payload.noteId,
         payload.categoryId,
         payload.attachmentId,

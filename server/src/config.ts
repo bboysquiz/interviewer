@@ -58,6 +58,12 @@ export const SERVER_ROOT = serverRoot
 export const SERVER_HOST = process.env.HOST?.trim() || '0.0.0.0'
 export const SERVER_PORT = Number(process.env.PORT ?? 3000)
 export const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173'
+export const AUTH_SESSION_COOKIE_NAME =
+  process.env.AUTH_SESSION_COOKIE_NAME?.trim() || 'programming_interviewer_session'
+export const AUTH_SESSION_TTL_DAYS = parsePositiveIntEnv(
+  process.env.AUTH_SESSION_TTL_DAYS,
+  30,
+)
 export const DATABASE_PATH =
   process.env.DATABASE_PATH ??
   (hasPersistentDataMount

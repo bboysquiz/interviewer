@@ -83,6 +83,7 @@ const sendAiError = (
 
 const collectScopedPreviousQuestions = (
   repository: ReturnType<typeof createInterviewRepository>,
+  userId: string,
   sourceType: AiInterviewSourceType,
   categoryId: string | null,
   noteIds: string[],
@@ -91,7 +92,7 @@ const collectScopedPreviousQuestions = (
 
   return uniqueNonEmpty(
     repository
-      .listRecentQuestionPrompts()
+      .listRecentQuestionPrompts(userId)
       .filter((row) => {
         if (sourceType === 'category') {
           return row.category_id === categoryId
@@ -127,11 +128,12 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
   const repository = createInterviewRepository(db)
   const analyticsRepository = createAnalyticsRepository(db)
 
-  router.get('/history', (_request, response) => {
-    response.json(repository.listHistoryRecords())
+  router.get('/history', (request, response) => {
+    response.json(repository.listHistoryRecords(request.authUser!.id))
   })
 
   router.get('/history/:sessionId', (request, response) => {
+    const userId = request.authUser!.id
     const sessionId = coerceString(request.params.sessionId)
 
     if (!sessionId) {
@@ -141,7 +143,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       return
     }
 
-    const record = repository.getHistoryRecord(sessionId)
+    const record = repository.getHistoryRecord(userId, sessionId)
 
     if (!record) {
       response.status(404).json({
@@ -154,6 +156,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
   })
 
   router.post('/history', (request, response) => {
+    const userId = request.authUser!.id
     const body = request.body as Record<string, unknown>
     const sessionInput = (body.session ?? {}) as Record<string, unknown>
     const questionInput = (body.question ?? {}) as Record<string, unknown>
@@ -190,6 +193,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
     const sessionRow: SessionRow = {
       id: sessionId,
+      user_id: userId,
       status: coerceNullableString(sessionInput.status) ?? 'completed',
       source_type:
         coerceNullableString(sessionInput.sourceType) ?? 'note_collection',
@@ -206,6 +210,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
     const questionRow: QuestionRow = {
       id: questionId,
+      user_id: userId,
       session_id: sessionId,
       source_type:
         coerceNullableString(questionInput.sourceType) ?? sessionRow.source_type,
@@ -224,6 +229,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
     const evaluationRow: EvaluationRow = {
       id: evaluationId,
+      user_id: userId,
       session_id: sessionId,
       question_id: questionId,
       answer_text: answerText,
@@ -323,6 +329,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
   })
 
   router.post('/questions', async (request, response) => {
+    const userId = request.authUser!.id
     const body = request.body as GenerateInterviewQuestionRequestDto &
       Record<string, unknown>
     const sourceType = readInterviewSourceType(body.sourceType)
@@ -342,12 +349,14 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
     try {
       const context = resolveInterviewKnowledgeBaseContext(db, {
+        userId,
         sourceType,
         categoryId,
         noteIds,
         preferredTitle: title,
       })
       const foundationUsageMap = repository.getFoundationUsageByKeys(
+        userId,
         uniqueNonEmpty(context.sources.map((source) => source.foundationKey)),
       )
       const annotatedSources = applyFoundationUsageToSources(
@@ -371,6 +380,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       const scopedPreviousQuestions = uniqueNonEmpty([
         ...collectScopedPreviousQuestions(
           repository,
+          userId,
           context.sourceType,
           context.categoryId,
           context.noteIds,
@@ -407,6 +417,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
       const sessionRow: SessionRow = {
         id: sessionId,
+        user_id: userId,
         status: 'active',
         source_type: context.sourceType,
         title: context.title,
@@ -421,6 +432,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
       const questionRow: QuestionRow = {
         id: questionId,
+        user_id: userId,
         session_id: sessionId,
         source_type: context.sourceType,
         category_id: context.categoryId,
@@ -434,6 +446,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       }
 
       repository.markFoundationUsage(
+        userId,
         uniqueNonEmpty(relevantSources.map((source) => source.foundationKey)).map(
           (foundationKey) => {
             const source = relevantSources.find(
@@ -455,6 +468,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
       repository.insertGeneratedSession(sessionRow, questionRow)
       analyticsRepository.recordAiUsageEvent({
+        userId,
         task: 'interview_question_generation',
         provider: parseProviderFromModel(generated.model),
         model: generated.model,
@@ -505,6 +519,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
   })
 
   router.post('/evaluations', async (request, response) => {
+    const userId = request.authUser!.id
     const body = request.body as EvaluateInterviewAnswerRequestDto &
       Record<string, unknown>
     const sessionId = coerceString(body.sessionId)
@@ -519,8 +534,8 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       return
     }
 
-    const sessionRow = repository.getSessionRow(sessionId)
-    const questionRow = repository.getQuestionRow(questionId)
+    const sessionRow = repository.getSessionRow(userId, sessionId)
+    const questionRow = repository.getQuestionRow(userId, questionId)
 
     if (!sessionRow) {
       response.status(404).json({
@@ -561,12 +576,14 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
     try {
       const context = resolveInterviewKnowledgeBaseContext(db, {
+        userId,
         sourceType,
         categoryId: questionRow.category_id ?? sessionRow.category_id,
         noteIds,
         preferredTitle: sessionRow.title,
       })
       const foundationUsageMap = repository.getFoundationUsageByKeys(
+        userId,
         uniqueNonEmpty(context.sources.map((source) => source.foundationKey)),
       )
       const totalFoundationCount = uniqueNonEmpty(
@@ -602,6 +619,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
 
       const evaluationRow: EvaluationRow = {
         id: evaluationId,
+        user_id: userId,
         session_id: sessionRow.id,
         question_id: questionRow.id,
         answer_text: answerText,
@@ -651,6 +669,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         updatedSessionRow,
       )
       analyticsRepository.recordAiUsageEvent({
+        userId,
         task: 'interview_answer_evaluation',
         provider: parseProviderFromModel(evaluated.model),
         model: evaluated.model,
@@ -662,7 +681,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         occurredAt: evaluatedAt,
       })
 
-      const historyRecord = repository.getHistoryRecord(sessionRow.id)
+      const historyRecord = repository.getHistoryRecord(userId, sessionRow.id)
 
       response.status(201).json({
         session:

@@ -58,6 +58,7 @@ export const createSearchRouter = (db: SqliteDatabase): Router => {
       INNER JOIN categories c ON c.id = nc.category_id
       LEFT JOIN attachments a ON a.id = nc.attachment_id
       WHERE note_chunks_fts MATCH ?
+        AND nc.user_id = ?
         AND (? IS NULL OR nc.category_id = ?)
       ORDER BY
         CASE nc.source
@@ -73,6 +74,7 @@ export const createSearchRouter = (db: SqliteDatabase): Router => {
   )
 
   router.get('/', (request, response) => {
+    const userId = request.authUser!.id
     const query =
       typeof request.query.q === 'string' ? request.query.q.trim() : ''
     const categoryId =
@@ -94,6 +96,7 @@ export const createSearchRouter = (db: SqliteDatabase): Router => {
 
     const rows = searchStatement.all(
       ftsQuery,
+      userId,
       categoryId || null,
       categoryId || null,
     ) as SearchRow[]

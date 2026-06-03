@@ -37,8 +37,8 @@ const baseCategorySelect = `
     COUNT(DISTINCT n.id) AS note_count,
     COUNT(DISTINCT a.id) AS attachment_count
   FROM categories c
-  LEFT JOIN notes n ON n.category_id = c.id
-  LEFT JOIN attachments a ON a.category_id = c.id
+  LEFT JOIN notes n ON n.category_id = c.id AND n.user_id = c.user_id
+  LEFT JOIN attachments a ON a.category_id = c.id AND a.user_id = c.user_id
 `
 
 const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
@@ -47,6 +47,7 @@ const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
 const buildUniqueSlug = (
   db: SqliteDatabase,
   rawValue: string,
+  username: string,
   excludeId?: string,
 ): string => {
   const baseSlug = slugify(rawValue)
@@ -61,13 +62,22 @@ const buildUniqueSlug = (
 
   let candidate = baseSlug
   let suffix = 2
+  const normalizedUsername = slugify(username)
 
   while (
-    (existingStatement.get(candidate, excludeId ?? null, excludeId ?? null) as {
+    (existingStatement.get(
+      candidate,
+      excludeId ?? null,
+      excludeId ?? null,
+    ) as {
       count: number
     }).count > 0
   ) {
-    candidate = `${baseSlug}-${suffix}`
+    const scopedBase =
+      suffix === 2 && normalizedUsername
+        ? `${baseSlug}-${normalizedUsername}`
+        : baseSlug
+    candidate = `${scopedBase}-${suffix}`
     suffix += 1
   }
 
@@ -78,21 +88,24 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
   const router = Router()
 
   const noteIdsStatement = db.prepare(
-    'SELECT id FROM notes WHERE category_id = ? ORDER BY created_at ASC',
+    'SELECT id FROM notes WHERE user_id = ? AND category_id = ? ORDER BY created_at ASC',
   )
   const listStatement = db.prepare(`
     ${baseCategorySelect}
+    WHERE c.user_id = ?
     GROUP BY c.id
     ORDER BY c.sort_order ASC, c.name ASC
   `)
   const byIdStatement = db.prepare(`
     ${baseCategorySelect}
-    WHERE c.id = ?
+    WHERE c.user_id = ? AND c.id = ?
     GROUP BY c.id
   `)
-  const deleteStatement = db.prepare('DELETE FROM categories WHERE id = ?')
+  const deleteStatement = db.prepare(
+    'DELETE FROM categories WHERE user_id = ? AND id = ?',
+  )
 
-  const mapCategory = (row: CategoryRow) => ({
+  const mapCategory = (userId: string, row: CategoryRow) => ({
     id: row.id,
     slug: row.slug,
     name: row.name,
@@ -100,7 +113,7 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
     color: row.color,
     icon: row.icon,
     sortOrder: row.sort_order,
-    noteIds: (noteIdsStatement.all(row.id) as Array<{ id: string }>).map(
+    noteIds: (noteIdsStatement.all(userId, row.id) as Array<{ id: string }>).map(
       (record) => record.id,
     ),
     noteCount: row.note_count,
@@ -109,17 +122,20 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
     updatedAt: row.updated_at,
   })
 
-  const getCategoryById = (categoryId: string) => {
-    const row = byIdStatement.get(categoryId) as CategoryRow | undefined
-    return row ? mapCategory(row) : null
+  const getCategoryById = (userId: string, categoryId: string) => {
+    const row = byIdStatement.get(userId, categoryId) as CategoryRow | undefined
+    return row ? mapCategory(userId, row) : null
   }
 
-  router.get('/', (_request, response) => {
-    const rows = listStatement.all() as CategoryRow[]
-    response.json(rows.map(mapCategory))
+  router.get('/', (request, response) => {
+    const userId = request.authUser!.id
+    const rows = listStatement.all(userId) as CategoryRow[]
+    response.json(rows.map((row) => mapCategory(userId, row)))
   })
 
   router.post('/', (request, response) => {
+    const userId = request.authUser!.id
+    const username = request.authUser!.username
     const body = request.body as Record<string, unknown>
     const name = coerceString(body.name)
 
@@ -139,12 +155,17 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
         : 0
     const timestamp = nowIso()
     const id = createId()
-    const slug = buildUniqueSlug(db, coerceString(body.slug, name))
+    const slug = buildUniqueSlug(
+      db,
+      coerceString(body.slug, name),
+      username,
+    )
 
     db.prepare(
       `
         INSERT INTO categories (
           id,
+          user_id,
           slug,
           name,
           description,
@@ -153,10 +174,11 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
           sort_order,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     ).run(
       id,
+      userId,
       slug,
       name,
       description,
@@ -167,12 +189,14 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
       timestamp,
     )
 
-    response.status(201).json(getCategoryById(id))
+    response.status(201).json(getCategoryById(userId, id))
   })
 
   router.patch('/:id', (request, response) => {
+    const userId = request.authUser!.id
+    const username = request.authUser!.username
     const categoryId = request.params.id
-    const existing = byIdStatement.get(categoryId) as CategoryRow | undefined
+    const existing = byIdStatement.get(userId, categoryId) as CategoryRow | undefined
 
     if (!existing) {
       response.status(404).json({
@@ -217,7 +241,7 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
     const nextSlug =
       rawSlugSource === existing.slug
         ? existing.slug
-        : buildUniqueSlug(db, rawSlugSource, categoryId)
+        : buildUniqueSlug(db, rawSlugSource, username, categoryId)
     const updatedAt = nowIso()
 
     db.prepare(
@@ -244,12 +268,13 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
       categoryId,
     )
 
-    response.json(getCategoryById(categoryId))
+    response.json(getCategoryById(userId, categoryId))
   })
 
   router.delete('/:id', (request, response) => {
+    const userId = request.authUser!.id
     const categoryId = request.params.id
-    const result = deleteStatement.run(categoryId)
+    const result = deleteStatement.run(userId, categoryId)
 
     if (result.changes === 0) {
       response.status(404).json({
