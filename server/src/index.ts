@@ -5,8 +5,18 @@ import cors from 'cors'
 import express from 'express'
 
 import {
+  AI_FALLBACK_PROVIDER,
+  AI_PRIMARY_PROVIDER,
   CLIENT_ORIGIN,
   DATABASE_PATH,
+  GEMINI_API_KEY,
+  GEMINI_INTERVIEW_EVALUATION_MODEL,
+  GEMINI_INTERVIEW_QUESTION_MODEL,
+  GEMINI_VISION_MODEL,
+  GROQ_API_KEY,
+  GROQ_INTERVIEW_EVALUATION_MODELS,
+  GROQ_INTERVIEW_QUESTION_MODELS,
+  GROQ_VISION_MODELS,
   SERVER_HOST,
   SERVER_PORT,
   SERVER_ROOT,
@@ -100,6 +110,24 @@ const server = app.listen(SERVER_PORT, SERVER_HOST, () => {
   console.log(`Backend listening on http://${host}:${port}`)
   console.log(`SQLite database path: ${DATABASE_PATH}`)
   console.log(`Uploads directory: ${UPLOADS_DIR}`)
+  console.log(
+    [
+      `AI providers: primary=${AI_PRIMARY_PROVIDER}`,
+      `fallback=${AI_FALLBACK_PROVIDER}`,
+      `gemini=${GEMINI_API_KEY ? 'configured' : 'missing'}`,
+      `groq=${GROQ_API_KEY ? 'configured' : 'missing'}`,
+    ].join(', '),
+  )
+  console.log(
+    [
+      `AI models: geminiVision=${GEMINI_VISION_MODEL}`,
+      `geminiQuestion=${GEMINI_INTERVIEW_QUESTION_MODEL}`,
+      `geminiEvaluation=${GEMINI_INTERVIEW_EVALUATION_MODEL}`,
+      `groqVision=${GROQ_VISION_MODELS.join(' -> ')}`,
+      `groqQuestion=${GROQ_INTERVIEW_QUESTION_MODELS.join(' -> ')}`,
+      `groqEvaluation=${GROQ_INTERVIEW_EVALUATION_MODELS.join(' -> ')}`,
+    ].join(', '),
+  )
 })
 
 server.on('error', (error) => {

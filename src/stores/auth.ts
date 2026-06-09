@@ -52,9 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
       } else {
         clearAuthState()
         authError.value =
-          error instanceof Error
-            ? error.message
-            : 'Не удалось восстановить сессию.'
+          error instanceof Error ? error.message : 'Не удалось восстановить сессию.'
       }
     } finally {
       hasRestored.value = true

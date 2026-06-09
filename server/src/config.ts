@@ -41,6 +41,12 @@ const parseListEnv = (value: string | undefined): string[] =>
     .map((item) => item.trim())
     .filter(Boolean)
 
+const buildModelCandidates = (
+  primaryModel: string,
+  extraModels: string | undefined,
+  defaultFallbacks: string[] = [],
+): string[] => [...new Set([primaryModel, ...parseListEnv(extraModels), ...defaultFallbacks])]
+
 const parsePositiveIntEnv = (
   value: string | undefined,
   fallback: number,
@@ -96,9 +102,9 @@ export const GEMINI_DNS_SERVERS = parseListEnv(process.env.GEMINI_DNS_SERVERS)
 export const GEMINI_VISION_MODEL =
   process.env.GEMINI_VISION_MODEL ?? 'gemini-2.5-flash'
 export const GEMINI_INTERVIEW_QUESTION_MODEL =
-  process.env.GEMINI_INTERVIEW_QUESTION_MODEL ?? 'gemini-2.5-flash'
+  process.env.GEMINI_INTERVIEW_QUESTION_MODEL ?? 'gemini-3.1-flash-lite-preview'
 export const GEMINI_INTERVIEW_EVALUATION_MODEL =
-  process.env.GEMINI_INTERVIEW_EVALUATION_MODEL ?? 'gemini-2.5-flash'
+  process.env.GEMINI_INTERVIEW_EVALUATION_MODEL ?? 'gemini-3.1-flash-lite-preview'
 export const GROQ_API_KEY = process.env.GROQ_API_KEY ?? ''
 export const GROQ_VISION_MODEL =
   process.env.GROQ_VISION_MODEL ?? 'meta-llama/llama-4-scout-17b-16e-instruct'
@@ -106,6 +112,20 @@ export const GROQ_INTERVIEW_QUESTION_MODEL =
   process.env.GROQ_INTERVIEW_QUESTION_MODEL ?? 'openai/gpt-oss-20b'
 export const GROQ_INTERVIEW_EVALUATION_MODEL =
   process.env.GROQ_INTERVIEW_EVALUATION_MODEL ?? 'openai/gpt-oss-20b'
+export const GROQ_VISION_MODELS = buildModelCandidates(
+  GROQ_VISION_MODEL,
+  process.env.GROQ_VISION_MODEL_FALLBACKS,
+)
+export const GROQ_INTERVIEW_QUESTION_MODELS = buildModelCandidates(
+  GROQ_INTERVIEW_QUESTION_MODEL,
+  process.env.GROQ_INTERVIEW_QUESTION_MODEL_FALLBACKS,
+  ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+)
+export const GROQ_INTERVIEW_EVALUATION_MODELS = buildModelCandidates(
+  GROQ_INTERVIEW_EVALUATION_MODEL,
+  process.env.GROQ_INTERVIEW_EVALUATION_MODEL_FALLBACKS,
+  ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+)
 export const OPENAI_INTERVIEW_CONTEXT_MAX_CHARS = Number(
   process.env.OPENAI_INTERVIEW_CONTEXT_MAX_CHARS ?? 12000,
 )

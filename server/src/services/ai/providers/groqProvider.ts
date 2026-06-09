@@ -2,9 +2,9 @@ import OpenAI from 'openai'
 
 import {
   GROQ_API_KEY,
-  GROQ_INTERVIEW_EVALUATION_MODEL,
-  GROQ_INTERVIEW_QUESTION_MODEL,
-  GROQ_VISION_MODEL,
+  GROQ_INTERVIEW_EVALUATION_MODELS,
+  GROQ_INTERVIEW_QUESTION_MODELS,
+  GROQ_VISION_MODELS,
 } from '../../../config.js'
 
 import type {
@@ -64,9 +64,23 @@ const getGroqClient = (): OpenAI => {
 const toGroqAiServiceError = (
   error: unknown,
   fallbackMessage: string,
+  model?: string,
 ): AiServiceError => {
   if (error instanceof AiServiceError) {
-    return error
+    const details =
+      error.details && typeof error.details === 'object'
+        ? (error.details as Record<string, unknown>)
+        : {}
+
+    return new AiServiceError(error.message, {
+      status: error.status,
+      code: error.code,
+      details: {
+        provider: 'groq',
+        ...(model ? { model } : {}),
+        ...details,
+      },
+    })
   }
 
   if (
@@ -80,6 +94,18 @@ const toGroqAiServiceError = (
       'message' in error && typeof error.message === 'string'
         ? error.message
         : fallbackMessage
+    const upstreamError =
+      'error' in error && error.error && typeof error.error === 'object'
+        ? (error.error as Record<string, unknown>)
+        : null
+    const upstreamCode =
+      upstreamError && typeof upstreamError.code === 'string'
+        ? upstreamError.code
+        : null
+    const upstreamType =
+      upstreamError && typeof upstreamError.type === 'string'
+        ? upstreamError.type
+        : null
 
     return new AiServiceError(message, {
       status,
@@ -91,11 +117,72 @@ const toGroqAiServiceError = (
             : 'ai_upstream_error',
       details: {
         provider: 'groq',
+        ...(model ? { model } : {}),
+        ...(upstreamCode ? { providerCode: upstreamCode } : {}),
+        ...(upstreamType ? { providerType: upstreamType } : {}),
+        ...(status === 403
+          ? {
+              possibleCause:
+                'Groq denied this request. Check the API key, organization access, model availability, and server egress region.',
+            }
+          : {}),
       },
     })
   }
 
   return toAiServiceError(error, fallbackMessage)
+}
+
+const shouldTryNextGroqModel = (error: AiServiceError): boolean => {
+  if ([400, 403, 404, 429].includes(error.status)) {
+    return true
+  }
+
+  if (error.status >= 500 && error.status < 600) {
+    return true
+  }
+
+  return error.code === 'ai_invalid_response' || error.code === 'ai_validation_error'
+}
+
+const runGroqModelCandidates = async <T>(
+  models: string[],
+  taskLabel: string,
+  run: (model: string) => Promise<T>,
+): Promise<T> => {
+  let lastError: AiServiceError | null = null
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index]
+
+    try {
+      return await run(model)
+    } catch (error) {
+      const aiError = toGroqAiServiceError(error, `Groq ${taskLabel} failed.`, model)
+      lastError = aiError
+
+      const nextModel = models[index + 1]
+
+      if (!nextModel || !shouldTryNextGroqModel(aiError)) {
+        throw aiError
+      }
+
+      console.warn(
+        `Groq model "${model}" failed for ${taskLabel}. Trying "${nextModel}". status=${aiError.status} | code=${aiError.code} | message=${aiError.message}`,
+      )
+    }
+  }
+
+  throw (
+    lastError ??
+    new AiServiceError(`Groq ${taskLabel} failed.`, {
+      status: 502,
+      code: 'ai_upstream_error',
+      details: {
+        provider: 'groq',
+      },
+    })
+  )
 }
 
 const buildGroqUsage = (
@@ -219,10 +306,10 @@ const analyzeImageForKnowledgeBase = async (
     })
   }
 
-  try {
+  return runGroqModelCandidates(GROQ_VISION_MODELS, 'image analysis', async (model) => {
     const client = getGroqClient()
     const completion = await client.chat.completions.create({
-      model: GROQ_VISION_MODEL,
+      model,
       messages: [
         {
           role: 'user',
@@ -268,13 +355,11 @@ const analyzeImageForKnowledgeBase = async (
 
     return buildImageAnalysisResult(
       record,
-      formatProviderModel('groq', GROQ_VISION_MODEL),
+      formatProviderModel('groq', model),
       completion.id ?? null,
       buildGroqUsage(completion.usage),
     )
-  } catch (error) {
-    throw toGroqAiServiceError(error, 'Groq image analysis failed.')
-  }
+  })
 }
 
 const generateInterviewQuestion = async (
@@ -287,10 +372,13 @@ const generateInterviewQuestion = async (
     })
   }
 
-  try {
+  return runGroqModelCandidates(
+    GROQ_INTERVIEW_QUESTION_MODELS,
+    'interview question generation',
+    async (model) => {
     const client = getGroqClient()
     const completion = await client.chat.completions.create({
-      model: GROQ_INTERVIEW_QUESTION_MODEL,
+      model,
       messages: [
         {
           role: 'system',
@@ -329,14 +417,13 @@ const generateInterviewQuestion = async (
 
     return buildQuestionResult(
       record,
-      formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+      formatProviderModel('groq', model),
       completion.id ?? null,
       buildGroqUsage(completion.usage),
       input.previousQuestions,
     )
-  } catch (error) {
-    throw toGroqAiServiceError(error, 'Groq interview question generation failed.')
-  }
+    },
+  )
 }
 
 const evaluateInterviewAnswer = async (
@@ -352,10 +439,13 @@ const evaluateInterviewAnswer = async (
     )
   }
 
-  try {
+  return runGroqModelCandidates(
+    GROQ_INTERVIEW_EVALUATION_MODELS,
+    'interview answer evaluation',
+    async (model) => {
     const client = getGroqClient()
     const completion = await client.chat.completions.create({
-      model: GROQ_INTERVIEW_EVALUATION_MODEL,
+      model,
       messages: [
         {
           role: 'system',
@@ -394,13 +484,12 @@ const evaluateInterviewAnswer = async (
 
     return buildEvaluationResult(
       record,
-      formatProviderModel('groq', GROQ_INTERVIEW_EVALUATION_MODEL),
+      formatProviderModel('groq', model),
       completion.id ?? null,
       buildGroqUsage(completion.usage),
     )
-  } catch (error) {
-    throw toGroqAiServiceError(error, 'Groq interview answer evaluation failed.')
-  }
+    },
+  )
 }
 
 const organizeKnowledgeBaseNote = async (
@@ -413,7 +502,10 @@ const organizeKnowledgeBaseNote = async (
     })
   }
 
-  try {
+  return runGroqModelCandidates(
+    GROQ_INTERVIEW_QUESTION_MODELS,
+    'note organization',
+    async (model) => {
     const client = getGroqClient()
     const systemPrompt = [
       buildNoteOrganizationSystemPrompt(),
@@ -436,7 +528,7 @@ const organizeKnowledgeBaseNote = async (
     ]
 
     const completion = await client.chat.completions.create({
-      model: GROQ_INTERVIEW_QUESTION_MODEL,
+      model,
       messages,
       max_completion_tokens: 900,
     })
@@ -463,7 +555,7 @@ const organizeKnowledgeBaseNote = async (
         )
         sections = buildNoteOrganizationResult(
           record,
-          formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+          formatProviderModel('groq', model),
           completion.id ?? null,
           buildGroqUsage(completion.usage),
         ).sections
@@ -488,13 +580,12 @@ const organizeKnowledgeBaseNote = async (
 
     return {
       sections,
-      model: formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+      model: formatProviderModel('groq', model),
       requestId: completion.id ?? null,
       usage: buildGroqUsage(completion.usage),
     }
-  } catch (error) {
-    throw toGroqAiServiceError(error, 'Groq note organization failed.')
-  }
+    },
+  )
 }
 
 const suggestNoteStudyTopics = async (
@@ -510,10 +601,13 @@ const suggestNoteStudyTopics = async (
     )
   }
 
-  try {
+  return runGroqModelCandidates(
+    GROQ_INTERVIEW_QUESTION_MODELS,
+    'study topic suggestion',
+    async (model) => {
     const client = getGroqClient()
     const completion = await client.chat.completions.create({
-      model: GROQ_INTERVIEW_QUESTION_MODEL,
+      model,
       messages: [
         {
           role: 'system',
@@ -546,13 +640,12 @@ const suggestNoteStudyTopics = async (
 
     return buildNoteStudySuggestionsResultFromItems(
       suggestions,
-      formatProviderModel('groq', GROQ_INTERVIEW_QUESTION_MODEL),
+      formatProviderModel('groq', model),
       completion.id ?? null,
       buildGroqUsage(completion.usage),
     )
-  } catch (error) {
-    throw toGroqAiServiceError(error, 'Groq study topic suggestion failed.')
-  }
+    },
+  )
 }
 
 export const groqProvider: AiProvider = {
