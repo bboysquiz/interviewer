@@ -60,16 +60,10 @@ const submit = async (): Promise<void> => {
 <template>
   <section class="auth-panel surface-card">
     <div class="surface-card__header">
-      <p class="surface-card__eyebrow">Аккаунт</p>
       <h2 class="surface-card__title">{{ panelTitle }}</h2>
     </div>
 
     <div class="surface-card__body">
-      <p class="muted">
-        Войди в существующий аккаунт или создай новый, чтобы заметки,
-        скриншоты и история собеседований сохранялись отдельно по
-        пользователям.
-      </p>
 
       <div class="auth-panel__modes" role="tablist" aria-label="Режим авторизации">
         <button
@@ -99,7 +93,6 @@ const submit = async (): Promise<void> => {
             type="text"
             name="username"
             autocomplete="username"
-            placeholder="Например, bboysquiz"
           >
         </label>
 
@@ -111,7 +104,6 @@ const submit = async (): Promise<void> => {
             type="password"
             name="password"
             autocomplete="current-password"
-            placeholder="Минимум 8 символов"
           >
         </label>
 

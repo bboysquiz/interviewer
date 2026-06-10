@@ -1,13 +1,13 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { OPENAI_IMAGE_ANALYSIS_MODEL, UPLOADS_DIR } from '../config.js'
+import { UPLOADS_DIR } from '../config.js'
 import type { SqliteDatabase } from '../db.js'
 import { parseStringArray, toJson } from '../lib/json.js'
 import { replaceAttachmentChunks } from '../lib/chunks.js'
 import { nowIso } from '../lib/text.js'
 import { createAnalyticsRepository } from './analyticsRepository.js'
-import { analyzeImageForKnowledgeBase } from './ai/openAiService.js'
+import { analyzeImageForKnowledgeBase } from './ai/aiService.js'
 import { AiServiceError } from './ai/errors.js'
 
 interface AttachmentAnalysisRow {
@@ -21,6 +21,7 @@ interface AttachmentAnalysisRow {
   image_description: string | null
   key_terms_json: string
   processing_status: 'pending' | 'processing' | 'ready' | 'failed'
+  analysis_model: string | null
 }
 
 export interface AttachmentAnalysisExecution {
@@ -45,7 +46,8 @@ const attachmentByIdStatementSql = `
     extracted_text,
     image_description,
     key_terms_json,
-    processing_status
+    processing_status,
+    analysis_model
   FROM attachments
   WHERE id = ?
 `
@@ -95,7 +97,7 @@ const markAttachmentAsFailed = (
   ).run(message, nowIso(), attachmentId)
 }
 
-export const analyzeAttachmentWithOpenAI = async (
+export const analyzeAttachmentWithAi = async (
   db: SqliteDatabase,
   attachmentId: string,
   options: { force?: boolean } = {},
@@ -123,7 +125,7 @@ export const analyzeAttachmentWithOpenAI = async (
   if (alreadyProcessed && !options.force) {
     return {
       status: 'skipped',
-      model: OPENAI_IMAGE_ANALYSIS_MODEL,
+      model: attachment.analysis_model,
       requestId: null,
       usage: null,
     }

@@ -81,13 +81,6 @@ export const UPLOADS_DIR =
     ? '/data/uploads'
     : path.join(SERVER_ROOT, 'uploads'))
 export const SCHEMA_PATH = path.join(SERVER_ROOT, 'schema.sql')
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? ''
-export const OPENAI_IMAGE_ANALYSIS_MODEL =
-  process.env.OPENAI_IMAGE_ANALYSIS_MODEL ?? 'gpt-4.1-mini'
-export const OPENAI_INTERVIEW_QUESTION_MODEL =
-  process.env.OPENAI_INTERVIEW_QUESTION_MODEL ?? 'gpt-4.1-mini'
-export const OPENAI_INTERVIEW_EVALUATION_MODEL =
-  process.env.OPENAI_INTERVIEW_EVALUATION_MODEL ?? 'gpt-4.1-mini'
 export const AI_PRIMARY_PROVIDER = normalizeAiProvider(
   process.env.AI_PRIMARY_PROVIDER,
   'gemini',
@@ -109,9 +102,9 @@ export const GROQ_API_KEY = process.env.GROQ_API_KEY ?? ''
 export const GROQ_VISION_MODEL =
   process.env.GROQ_VISION_MODEL ?? 'meta-llama/llama-4-scout-17b-16e-instruct'
 export const GROQ_INTERVIEW_QUESTION_MODEL =
-  process.env.GROQ_INTERVIEW_QUESTION_MODEL ?? 'openai/gpt-oss-20b'
+  process.env.GROQ_INTERVIEW_QUESTION_MODEL ?? 'llama-3.3-70b-versatile'
 export const GROQ_INTERVIEW_EVALUATION_MODEL =
-  process.env.GROQ_INTERVIEW_EVALUATION_MODEL ?? 'openai/gpt-oss-20b'
+  process.env.GROQ_INTERVIEW_EVALUATION_MODEL ?? 'llama-3.3-70b-versatile'
 export const GROQ_VISION_MODELS = buildModelCandidates(
   GROQ_VISION_MODEL,
   process.env.GROQ_VISION_MODEL_FALLBACKS,
@@ -119,15 +112,15 @@ export const GROQ_VISION_MODELS = buildModelCandidates(
 export const GROQ_INTERVIEW_QUESTION_MODELS = buildModelCandidates(
   GROQ_INTERVIEW_QUESTION_MODEL,
   process.env.GROQ_INTERVIEW_QUESTION_MODEL_FALLBACKS,
-  ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  ['llama-3.1-8b-instant'],
 )
 export const GROQ_INTERVIEW_EVALUATION_MODELS = buildModelCandidates(
   GROQ_INTERVIEW_EVALUATION_MODEL,
   process.env.GROQ_INTERVIEW_EVALUATION_MODEL_FALLBACKS,
-  ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+  ['llama-3.1-8b-instant'],
 )
-export const OPENAI_INTERVIEW_CONTEXT_MAX_CHARS = Number(
-  process.env.OPENAI_INTERVIEW_CONTEXT_MAX_CHARS ?? 12000,
+export const AI_INTERVIEW_CONTEXT_MAX_CHARS = Number(
+  process.env.AI_INTERVIEW_CONTEXT_MAX_CHARS ?? 12000,
 )
 export const AI_ANALYTICS_WINDOW_HOURS = parsePositiveIntEnv(
   process.env.AI_ANALYTICS_WINDOW_HOURS,

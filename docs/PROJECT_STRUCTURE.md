@@ -28,7 +28,7 @@
 - `server/src/config.ts` — env/config loading
 - `server/src/db.ts` — SQLite init, schema bootstrapping, migrations/backfill
 - `server/src/routes/` — HTTP routes
-- `server/src/services/` — business logic, interview helpers, OpenAI integration
+- `server/src/services/` — business logic, interview helpers, AI integration
 - `server/src/services/ai/` — shared AI service layer и DTO/errors
 - `server/src/lib/` — low-level helpers для chunks/json/text
 - `server/schema.sql` — source of truth для SQL schema

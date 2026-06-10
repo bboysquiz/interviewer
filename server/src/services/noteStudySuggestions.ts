@@ -5,7 +5,7 @@ import type {
   SuggestNoteStudyTopicsResult,
 } from './ai/dto.js'
 import { AiServiceError } from './ai/errors.js'
-import { suggestNoteStudyTopics } from './ai/openAiService.js'
+import { suggestNoteStudyTopics } from './ai/aiService.js'
 
 interface NoteKnowledgeAttachment {
   originalFileName: string | null

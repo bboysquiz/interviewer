@@ -97,7 +97,6 @@ const budgetMetaById = {
 const providerLabels: Record<string, string> = {
   gemini: 'Gemini',
   groq: 'Groq',
-  openai: 'OpenAI',
   unknown: 'Другое',
 }
 

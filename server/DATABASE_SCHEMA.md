@@ -100,7 +100,7 @@ Source of truth: [`schema.sql`](./schema.sql)
 | `processed_at` | `TEXT` | когда анализ завершился |
 | `processing_error` | `TEXT` | текст ошибки |
 | `analysis_model` | `TEXT` | какая AI-модель использовалась |
-| `analysis_request_id` | `TEXT` | request id OpenAI |
+| `analysis_request_id` | `TEXT` | request id AI provider |
 | `created_at` | `TEXT` | ISO timestamp |
 | `updated_at` | `TEXT` | ISO timestamp |
 

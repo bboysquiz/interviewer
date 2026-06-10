@@ -216,9 +216,7 @@ const formatAiModelLabel = (value: string | null | undefined): string | null => 
       ? 'Gemini'
       : provider === 'groq'
         ? 'Groq'
-        : provider === 'openai'
-          ? 'OpenAI'
-          : provider
+        : provider
 
   return `${providerLabel} · ${model}`
 }

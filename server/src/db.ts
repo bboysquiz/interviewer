@@ -228,10 +228,6 @@ const parseProviderFromModel = (model: string | null): string => {
   const separatorIndex = normalized.indexOf(':')
 
   if (separatorIndex <= 0) {
-    if (normalized.startsWith('gpt-')) {
-      return 'openai'
-    }
-
     return 'unknown'
   }
 

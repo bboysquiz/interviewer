@@ -1,5 +1,3 @@
-import OpenAI from 'openai'
-
 import {
   GROQ_API_KEY,
   GROQ_INTERVIEW_EVALUATION_MODELS,
@@ -43,22 +41,54 @@ import {
 import { AiServiceError, toAiServiceError } from '../errors.js'
 import type { AiProvider } from '../providerTypes.js'
 
-let groqClient: OpenAI | null = null
+type GroqTextContent = {
+  type: 'text'
+  text: string
+}
 
-const getGroqClient = (): OpenAI => {
+type GroqImageUrlContent = {
+  type: 'image_url'
+  image_url: {
+    url: string
+  }
+}
+
+type GroqMessage = {
+  role: 'system' | 'user'
+  content: string | Array<GroqTextContent | GroqImageUrlContent>
+}
+
+interface GroqChatCompletionResponse {
+  id?: string | null
+  choices?: Array<{
+    message?: {
+      content?: unknown
+    }
+  }>
+  usage?: {
+    prompt_tokens?: number | null
+    completion_tokens?: number | null
+    total_tokens?: number | null
+  }
+}
+
+interface GroqErrorBody {
+  error?: {
+    message?: string
+    type?: string
+    code?: string
+  }
+}
+
+const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions'
+
+const ensureGroqConfigured = (): void => {
   if (!GROQ_API_KEY) {
     throw new AiServiceError('GROQ_API_KEY is not configured on the server.', {
       status: 503,
       code: 'ai_config_error',
     })
   }
-
-  groqClient ??= new OpenAI({
-    apiKey: GROQ_API_KEY,
-    baseURL: 'https://api.groq.com/openai/v1',
-  })
-
-  return groqClient
 }
 
 const toGroqAiServiceError = (
@@ -131,6 +161,80 @@ const toGroqAiServiceError = (
   }
 
   return toAiServiceError(error, fallbackMessage)
+}
+
+const parseJsonObject = (rawValue: string): Record<string, unknown> | null => {
+  if (!rawValue.trim()) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+const callGroqChatCompletion = async (
+  body: {
+    model: string
+    messages: GroqMessage[]
+    response_format?: {
+      type: 'json_object'
+    }
+    max_completion_tokens?: number
+  },
+): Promise<GroqChatCompletionResponse> => {
+  ensureGroqConfigured()
+
+  const response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  const responseText = await response.text()
+  const responseBody = parseJsonObject(responseText)
+
+  if (!response.ok) {
+    const errorBody = responseBody as GroqErrorBody | null
+    const providerCode = errorBody?.error?.code ?? null
+    const providerType = errorBody?.error?.type ?? null
+
+    throw new AiServiceError(
+      errorBody?.error?.message ||
+        responseText ||
+        `Groq request failed with status ${response.status}.`,
+      {
+        status: response.status,
+        code:
+          response.status === 400
+            ? 'ai_validation_error'
+            : response.status === 404
+              ? 'ai_not_found'
+              : 'ai_upstream_error',
+        details: {
+          provider: 'groq',
+          model: body.model,
+          ...(providerCode ? { providerCode } : {}),
+          ...(providerType ? { providerType } : {}),
+          ...(response.status === 403
+            ? {
+                possibleCause:
+                  'Groq denied this request. Check the API key, organization access, model availability, and server egress region.',
+              }
+            : {}),
+        },
+      },
+    )
+  }
+
+  return (responseBody ?? {}) as GroqChatCompletionResponse
 }
 
 const shouldTryNextGroqModel = (error: AiServiceError): boolean => {
@@ -307,8 +411,7 @@ const analyzeImageForKnowledgeBase = async (
   }
 
   return runGroqModelCandidates(GROQ_VISION_MODELS, 'image analysis', async (model) => {
-    const client = getGroqClient()
-    const completion = await client.chat.completions.create({
+    const completion = await callGroqChatCompletion({
       model,
       messages: [
         {
@@ -336,7 +439,7 @@ const analyzeImageForKnowledgeBase = async (
       max_completion_tokens: 1200,
     })
 
-    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
+    const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
 
     if (!rawOutput) {
       throw new AiServiceError(
@@ -376,52 +479,51 @@ const generateInterviewQuestion = async (
     GROQ_INTERVIEW_QUESTION_MODELS,
     'interview question generation',
     async (model) => {
-    const client = getGroqClient()
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            buildInterviewQuestionSystemPrompt(),
-            'Return only one JSON object with keys question, rationale, expected_topics, difficulty, and source_indexes.',
-          ].join('\n\n'),
+      const completion = await callGroqChatCompletion({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              buildInterviewQuestionSystemPrompt(),
+              'Return only one JSON object with keys question, rationale, expected_topics, difficulty, and source_indexes.',
+            ].join('\n\n'),
+          },
+          {
+            role: 'user',
+            content: buildInterviewQuestionUserPrompt(input),
+          },
+        ],
+        response_format: {
+          type: 'json_object',
         },
-        {
-          role: 'user',
-          content: buildInterviewQuestionUserPrompt(input),
-        },
-      ],
-      response_format: {
-        type: 'json_object',
-      },
-      max_completion_tokens: 900,
-    })
+        max_completion_tokens: 900,
+      })
 
-    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
+      const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
 
-    if (!rawOutput) {
-      throw new AiServiceError(
-        'Groq returned an empty structured response for interview question generation.',
-        {
-          status: 502,
-          code: 'ai_invalid_response',
-        },
+      if (!rawOutput) {
+        throw new AiServiceError(
+          'Groq returned an empty structured response for interview question generation.',
+          {
+            status: 502,
+            code: 'ai_invalid_response',
+          },
+        )
+      }
+
+      const record = parseStructuredRecord(
+        rawOutput,
+        'Groq returned invalid JSON for interview question generation.',
       )
-    }
 
-    const record = parseStructuredRecord(
-      rawOutput,
-      'Groq returned invalid JSON for interview question generation.',
-    )
-
-    return buildQuestionResult(
-      record,
-      formatProviderModel('groq', model),
-      completion.id ?? null,
-      buildGroqUsage(completion.usage),
-      input.previousQuestions,
-    )
+      return buildQuestionResult(
+        record,
+        formatProviderModel('groq', model),
+        completion.id ?? null,
+        buildGroqUsage(completion.usage),
+        input.previousQuestions,
+      )
     },
   )
 }
@@ -443,51 +545,50 @@ const evaluateInterviewAnswer = async (
     GROQ_INTERVIEW_EVALUATION_MODELS,
     'interview answer evaluation',
     async (model) => {
-    const client = getGroqClient()
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            buildInterviewEvaluationSystemPrompt(),
-            'Return only one JSON object with keys knowledge_base, general_knowledge, and overall_summary. Each criterion object must include score, max_score, comment, improvement_tip, corrected_answer, and is_strong_answer.',
-          ].join('\n\n'),
+      const completion = await callGroqChatCompletion({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              buildInterviewEvaluationSystemPrompt(),
+              'Return only one JSON object with keys knowledge_base, general_knowledge, and overall_summary. Each criterion object must include score, max_score, comment, improvement_tip, corrected_answer, and is_strong_answer.',
+            ].join('\n\n'),
+          },
+          {
+            role: 'user',
+            content: buildInterviewEvaluationUserPrompt(input),
+          },
+        ],
+        response_format: {
+          type: 'json_object',
         },
-        {
-          role: 'user',
-          content: buildInterviewEvaluationUserPrompt(input),
-        },
-      ],
-      response_format: {
-        type: 'json_object',
-      },
-      max_completion_tokens: 1600,
-    })
+        max_completion_tokens: 1600,
+      })
 
-    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
+      const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
 
-    if (!rawOutput) {
-      throw new AiServiceError(
-        'Groq returned an empty structured response for answer evaluation.',
-        {
-          status: 502,
-          code: 'ai_invalid_response',
-        },
+      if (!rawOutput) {
+        throw new AiServiceError(
+          'Groq returned an empty structured response for answer evaluation.',
+          {
+            status: 502,
+            code: 'ai_invalid_response',
+          },
+        )
+      }
+
+      const record = parseStructuredRecord(
+        rawOutput,
+        'Groq returned invalid JSON for interview answer evaluation.',
       )
-    }
 
-    const record = parseStructuredRecord(
-      rawOutput,
-      'Groq returned invalid JSON for interview answer evaluation.',
-    )
-
-    return buildEvaluationResult(
-      record,
-      formatProviderModel('groq', model),
-      completion.id ?? null,
-      buildGroqUsage(completion.usage),
-    )
+      return buildEvaluationResult(
+        record,
+        formatProviderModel('groq', model),
+        completion.id ?? null,
+        buildGroqUsage(completion.usage),
+      )
     },
   )
 }
@@ -506,84 +607,83 @@ const organizeKnowledgeBaseNote = async (
     GROQ_INTERVIEW_QUESTION_MODELS,
     'note organization',
     async (model) => {
-    const client = getGroqClient()
-    const systemPrompt = [
-      buildNoteOrganizationSystemPrompt(),
-      'Return plain text only.',
-      'Use this exact format and nothing else:',
-      'SECTION: <short Russian title>',
-      'BLOCKS: <comma-separated one-based indexes>',
-      'Repeat the SECTION/BLOCKS pair for every section.',
-      'Do not add explanations, markdown, bullets, JSON, or prose before or after the sections.',
-    ].join('\n\n')
-    const messages = [
-      {
-        role: 'system' as const,
-        content: systemPrompt,
-      },
-      {
-        role: 'user' as const,
-        content: buildNoteOrganizationUserPrompt(input),
-      },
-    ]
-
-    const completion = await client.chat.completions.create({
-      model,
-      messages,
-      max_completion_tokens: 900,
-    })
-
-    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
-
-    if (!rawOutput) {
-      throw new AiServiceError(
-        'Groq returned an empty response for note organization.',
+      const systemPrompt = [
+        buildNoteOrganizationSystemPrompt(),
+        'Return plain text only.',
+        'Use this exact format and nothing else:',
+        'SECTION: <short Russian title>',
+        'BLOCKS: <comma-separated one-based indexes>',
+        'Repeat the SECTION/BLOCKS pair for every section.',
+        'Do not add explanations, markdown, bullets, JSON, or prose before or after the sections.',
+      ].join('\n\n')
+      const messages = [
         {
-          status: 502,
-          code: 'ai_invalid_response',
+          role: 'system' as const,
+          content: systemPrompt,
         },
-      )
-    }
+        {
+          role: 'user' as const,
+          content: buildNoteOrganizationUserPrompt(input),
+        },
+      ]
 
-    let sections = parseNoteOrganizationSectionsFromText(rawOutput)
+      const completion = await callGroqChatCompletion({
+        model,
+        messages,
+        max_completion_tokens: 900,
+      })
 
-    if (sections.length === 0) {
-      try {
-        const record = parseStructuredRecord(
-          rawOutput,
-          'Groq returned invalid structured data for note organization.',
+      const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
+
+      if (!rawOutput) {
+        throw new AiServiceError(
+          'Groq returned an empty response for note organization.',
+          {
+            status: 502,
+            code: 'ai_invalid_response',
+          },
         )
-        sections = buildNoteOrganizationResult(
-          record,
-          formatProviderModel('groq', model),
-          completion.id ?? null,
-          buildGroqUsage(completion.usage),
-        ).sections
-      } catch (error) {
-        const aiError = error instanceof AiServiceError
-          ? error
-          : new AiServiceError(
-              'Groq returned an unreadable response for note organization.',
-              {
-                status: 502,
-                code: 'ai_invalid_response',
-              },
-            )
+      }
 
-        if (!shouldRetryWithoutStructuredJson(aiError)) {
+      let sections = parseNoteOrganizationSectionsFromText(rawOutput)
+
+      if (sections.length === 0) {
+        try {
+          const record = parseStructuredRecord(
+            rawOutput,
+            'Groq returned invalid structured data for note organization.',
+          )
+          sections = buildNoteOrganizationResult(
+            record,
+            formatProviderModel('groq', model),
+            completion.id ?? null,
+            buildGroqUsage(completion.usage),
+          ).sections
+        } catch (error) {
+          const aiError = error instanceof AiServiceError
+            ? error
+            : new AiServiceError(
+                'Groq returned an unreadable response for note organization.',
+                {
+                  status: 502,
+                  code: 'ai_invalid_response',
+                },
+              )
+
+          if (!shouldRetryWithoutStructuredJson(aiError)) {
+            throw aiError
+          }
+
           throw aiError
         }
-
-        throw aiError
       }
-    }
 
-    return {
-      sections,
-      model: formatProviderModel('groq', model),
-      requestId: completion.id ?? null,
-      usage: buildGroqUsage(completion.usage),
-    }
+      return {
+        sections,
+        model: formatProviderModel('groq', model),
+        requestId: completion.id ?? null,
+        usage: buildGroqUsage(completion.usage),
+      }
     },
   )
 }
@@ -605,45 +705,44 @@ const suggestNoteStudyTopics = async (
     GROQ_INTERVIEW_QUESTION_MODELS,
     'study topic suggestion',
     async (model) => {
-    const client = getGroqClient()
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: buildNoteStudySuggestionsSystemPrompt(),
-        },
-        {
-          role: 'user',
-          content: buildNoteStudySuggestionsUserPrompt(input),
-        },
-      ],
-      max_completion_tokens: 1500,
-    })
+      const completion = await callGroqChatCompletion({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: buildNoteStudySuggestionsSystemPrompt(),
+          },
+          {
+            role: 'user',
+            content: buildNoteStudySuggestionsUserPrompt(input),
+          },
+        ],
+        max_completion_tokens: 1500,
+      })
 
-    const rawOutput = extractMessageText(completion.choices[0]?.message?.content)
+      const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
 
-    if (!rawOutput) {
-      throw new AiServiceError(
-        'Groq returned an empty response for study topic suggestions.',
-        {
-          status: 502,
-          code: 'ai_invalid_response',
-        },
+      if (!rawOutput) {
+        throw new AiServiceError(
+          'Groq returned an empty response for study topic suggestions.',
+          {
+            status: 502,
+            code: 'ai_invalid_response',
+          },
+        )
+      }
+
+      const suggestions = parseNoteStudySuggestionsFromText(
+        rawOutput,
+        'Groq returned an unreadable response for study topic suggestions.',
       )
-    }
 
-    const suggestions = parseNoteStudySuggestionsFromText(
-      rawOutput,
-      'Groq returned an unreadable response for study topic suggestions.',
-    )
-
-    return buildNoteStudySuggestionsResultFromItems(
-      suggestions,
-      formatProviderModel('groq', model),
-      completion.id ?? null,
-      buildGroqUsage(completion.usage),
-    )
+      return buildNoteStudySuggestionsResultFromItems(
+        suggestions,
+        formatProviderModel('groq', model),
+        completion.id ?? null,
+        buildGroqUsage(completion.usage),
+      )
     },
   )
 }

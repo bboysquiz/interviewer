@@ -6,7 +6,7 @@ import type {
   OrganizeKnowledgeBaseNoteResult,
 } from './ai/dto.js'
 import { AiServiceError } from './ai/errors.js'
-import { organizeKnowledgeBaseNote } from './ai/openAiService.js'
+import { organizeKnowledgeBaseNote } from './ai/aiService.js'
 
 const SECTION_DIVIDER = '___________________________________'
 const GENERATED_SECTION_HEADING_PATTERN =

@@ -59,7 +59,7 @@
 - `AI_PRIMARY_PROVIDER=gemini`
 - `AI_FALLBACK_PROVIDER=groq`
 - `GEMINI_DOH_URL=https://dns.comss.one/dns-query`
-- `OPENAI_INTERVIEW_CONTEXT_MAX_CHARS=12000`
+- `AI_INTERVIEW_CONTEXT_MAX_CHARS=12000`
 
 Секреты:
 
@@ -72,8 +72,8 @@
 - `GEMINI_INTERVIEW_QUESTION_MODEL=gemini-3.1-flash-lite-preview`
 - `GEMINI_INTERVIEW_EVALUATION_MODEL=gemini-3.1-flash-lite-preview`
 - `GROQ_VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct`
-- `GROQ_INTERVIEW_QUESTION_MODEL=openai/gpt-oss-20b`
-- `GROQ_INTERVIEW_EVALUATION_MODEL=openai/gpt-oss-20b`
+- `GROQ_INTERVIEW_QUESTION_MODEL=llama-3.3-70b-versatile`
+- `GROQ_INTERVIEW_EVALUATION_MODEL=llama-3.3-70b-versatile`
 
 ## 4. Включи домен
 

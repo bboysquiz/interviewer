@@ -20,7 +20,7 @@ import { AiServiceError } from '../services/ai/errors.js'
 import {
   evaluateInterviewAnswer,
   generateInterviewQuestion,
-} from '../services/ai/openAiService.js'
+} from '../services/ai/aiService.js'
 import { createAnalyticsRepository } from '../services/analyticsRepository.js'
 import {
   buildKnowledgeBaseContextFromFragments,

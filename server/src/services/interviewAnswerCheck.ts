@@ -1,4 +1,4 @@
-import { OPENAI_INTERVIEW_CONTEXT_MAX_CHARS } from '../config.js'
+import { AI_INTERVIEW_CONTEXT_MAX_CHARS } from '../config.js'
 import { coerceNullableString, coerceString } from '../lib/text.js'
 import type {
   CheckInterviewAnswerResponseDto,
@@ -73,7 +73,7 @@ export const buildKnowledgeBaseContextFromFragments = (
 
     if (
       sections.length > 1 &&
-      usedChars + section.length + 2 > OPENAI_INTERVIEW_CONTEXT_MAX_CHARS
+      usedChars + section.length + 2 > AI_INTERVIEW_CONTEXT_MAX_CHARS
     ) {
       break
     }

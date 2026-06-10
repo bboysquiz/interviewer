@@ -14,7 +14,7 @@ import {
   createId,
   nowIso,
 } from '../lib/text.js'
-import { analyzeAttachmentWithOpenAI } from '../services/openaiImageAnalysis.js'
+import { analyzeAttachmentWithAi } from '../services/attachmentImageAnalysis.js'
 
 interface AttachmentRow {
   id: string
@@ -380,7 +380,7 @@ export const createAttachmentsRouter = (db: SqliteDatabase): Router => {
     }
 
     try {
-      const analysis = await analyzeAttachmentWithOpenAI(db, attachmentId, {
+      const analysis = await analyzeAttachmentWithAi(db, attachmentId, {
         force,
       })
       const attachment = getAttachmentById(userId, attachmentId)
