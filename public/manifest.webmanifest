@@ -1,7 +1,7 @@
 {
   "name": "Programming Interviewer",
   "short_name": "Interviewer",
-  "description": "Личная база знаний по техническим темам с поиском, OCR и режимом собеседования.",
+  "description": "Personal technical knowledge base with OCR search and interview practice.",
   "lang": "ru",
   "start_url": "/",
   "scope": "/",

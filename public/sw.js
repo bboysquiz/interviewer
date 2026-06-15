@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'programming-interviewer-static-v1'
-const RUNTIME_CACHE = 'programming-interviewer-runtime-v1'
+const STATIC_CACHE = 'programming-interviewer-static-v2'
+const RUNTIME_CACHE = 'programming-interviewer-runtime-v2'
 const APP_SHELL_FILES = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg']
 
 self.addEventListener('install', (event) => {
