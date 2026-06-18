@@ -90,6 +90,12 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
   const noteIdsStatement = db.prepare(
     'SELECT id FROM notes WHERE user_id = ? AND category_id = ? ORDER BY created_at ASC',
   )
+  const nextSortOrderStatement = db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS sort_order FROM categories WHERE user_id = ?',
+  )
+  const categoryIdsStatement = db.prepare(
+    'SELECT id FROM categories WHERE user_id = ? ORDER BY sort_order ASC, name ASC',
+  )
   const listStatement = db.prepare(`
     ${baseCategorySelect}
     WHERE c.user_id = ?
@@ -103,6 +109,16 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
   `)
   const deleteStatement = db.prepare(
     'DELETE FROM categories WHERE user_id = ? AND id = ?',
+  )
+  const updateSortOrderStatement = db.prepare(
+    'UPDATE categories SET sort_order = ?, updated_at = ? WHERE user_id = ? AND id = ?',
+  )
+  const updateCategoryOrder = db.transaction(
+    (userId: string, categoryIds: string[], updatedAt: string) => {
+      categoryIds.forEach((categoryId, index) => {
+        updateSortOrderStatement.run(index, updatedAt, userId, categoryId)
+      })
+    },
   )
 
   const mapCategory = (userId: string, row: CategoryRow) => ({
@@ -152,7 +168,8 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
     const sortOrder =
       typeof body.sortOrder === 'number' && Number.isFinite(body.sortOrder)
         ? body.sortOrder
-        : 0
+        : ((nextSortOrderStatement.get(userId) as { sort_order: number })
+            .sort_order ?? 0)
     const timestamp = nowIso()
     const id = createId()
     const slug = buildUniqueSlug(
@@ -190,6 +207,63 @@ export const createCategoriesRouter = (db: SqliteDatabase): Router => {
     )
 
     response.status(201).json(getCategoryById(userId, id))
+  })
+
+  router.patch('/order', (request, response) => {
+    const userId = request.authUser!.id
+    const body = request.body as Record<string, unknown>
+
+    if (!Array.isArray(body.categoryIds)) {
+      response.status(400).json({
+        message: 'Field "categoryIds" must be an array.',
+      })
+      return
+    }
+
+    const requestedIds = body.categoryIds.map((value) => coerceString(value))
+
+    if (requestedIds.some((categoryId) => !categoryId)) {
+      response.status(400).json({
+        message: 'Field "categoryIds" must contain only non-empty strings.',
+      })
+      return
+    }
+
+    const uniqueRequestedIds = [...new Set(requestedIds)]
+
+    if (uniqueRequestedIds.length !== requestedIds.length) {
+      response.status(400).json({
+        message: 'Field "categoryIds" must not contain duplicate ids.',
+      })
+      return
+    }
+
+    const currentIds = (
+      categoryIdsStatement.all(userId) as Array<{ id: string }>
+    ).map((record) => record.id)
+    const currentIdSet = new Set(currentIds)
+    const unknownId = uniqueRequestedIds.find(
+      (categoryId) => !currentIdSet.has(categoryId),
+    )
+
+    if (unknownId) {
+      response.status(404).json({
+        message: `Category "${unknownId}" was not found.`,
+      })
+      return
+    }
+
+    const requestedIdSet = new Set(uniqueRequestedIds)
+    const nextIds = [
+      ...uniqueRequestedIds,
+      ...currentIds.filter((categoryId) => !requestedIdSet.has(categoryId)),
+    ]
+    const updatedAt = nowIso()
+
+    updateCategoryOrder(userId, nextIds, updatedAt)
+
+    const rows = listStatement.all(userId) as CategoryRow[]
+    response.json(rows.map((row) => mapCategory(userId, row)))
   })
 
   router.patch('/:id', (request, response) => {

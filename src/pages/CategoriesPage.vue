@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 
 import CategoryForm from '@/features/categories/CategoryForm.vue'
@@ -31,11 +31,36 @@ const updatingCategoryId = ref<string | null>(null)
 const deletingCategoryId = ref<string | null>(null)
 const editingCategoryId = ref<string | null>(null)
 const confirmingDeleteId = ref<string | null>(null)
+const visibleCategories = ref<Category[]>([])
+const draggedCategoryId = ref<string | null>(null)
+const dragOverCategoryId = ref<string | null>(null)
+const dragOriginOrderIds = ref<string[]>([])
+const reorderError = ref<string | null>(null)
+const isReordering = ref(false)
+
+let activeDragPointerId: number | null = null
 
 const categoryPendingDelete = computed(
   () =>
     categories.value.find((category) => category.id === confirmingDeleteId.value) ??
     null,
+)
+const isCategoryDragDisabled = computed(
+  () =>
+    isReordering.value ||
+    Boolean(editingCategoryId.value) ||
+    Boolean(updatingCategoryId.value) ||
+    Boolean(deletingCategoryId.value),
+)
+
+watch(
+  categories,
+  (nextCategories) => {
+    if (!draggedCategoryId.value) {
+      visibleCategories.value = [...nextCategories]
+    }
+  },
+  { immediate: true },
 )
 
 const resetCreateForm = (): void => {
@@ -156,6 +181,165 @@ const confirmDelete = async (category: Category): Promise<void> => {
 const reloadCategories = async (): Promise<void> => {
   await knowledgeBaseStore.loadCategories()
 }
+
+const getCategoryIdFromPoint = (event: PointerEvent): string | null => {
+  const target = document.elementFromPoint(event.clientX, event.clientY)
+  const categoryCard = target?.closest<HTMLElement>('[data-category-id]')
+
+  return categoryCard?.dataset.categoryId ?? null
+}
+
+const moveVisibleCategory = (
+  draggedCategoryId: string,
+  targetCategoryId: string,
+): void => {
+  if (draggedCategoryId === targetCategoryId) {
+    return
+  }
+
+  const fromIndex = visibleCategories.value.findIndex(
+    (category) => category.id === draggedCategoryId,
+  )
+  const toIndex = visibleCategories.value.findIndex(
+    (category) => category.id === targetCategoryId,
+  )
+
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+    return
+  }
+
+  const nextCategories = [...visibleCategories.value]
+  const [draggedCategory] = nextCategories.splice(fromIndex, 1)
+
+  if (!draggedCategory) {
+    return
+  }
+
+  nextCategories.splice(toIndex, 0, draggedCategory)
+  visibleCategories.value = nextCategories
+}
+
+const autoScrollDuringDrag = (event: PointerEvent): void => {
+  const edgeSize = 96
+  const maxStep = 18
+  const viewportHeight = window.innerHeight
+  let scrollStep = 0
+
+  if (event.clientY < edgeSize) {
+    scrollStep = -maxStep
+  } else if (viewportHeight - event.clientY < edgeSize) {
+    scrollStep = maxStep
+  }
+
+  if (scrollStep) {
+    document.scrollingElement?.scrollBy({ top: scrollStep })
+  }
+}
+
+const handleCategoryDragMove = (event: PointerEvent): void => {
+  if (
+    activeDragPointerId !== event.pointerId ||
+    !draggedCategoryId.value
+  ) {
+    return
+  }
+
+  event.preventDefault()
+  autoScrollDuringDrag(event)
+
+  const targetCategoryId = getCategoryIdFromPoint(event)
+  dragOverCategoryId.value = targetCategoryId
+
+  if (targetCategoryId) {
+    moveVisibleCategory(draggedCategoryId.value, targetCategoryId)
+  }
+}
+
+const cleanupCategoryDragListeners = (): void => {
+  window.removeEventListener('pointermove', handleCategoryDragMove)
+  window.removeEventListener('pointerup', finishCategoryDrag)
+  window.removeEventListener('pointercancel', cancelCategoryDrag)
+  activeDragPointerId = null
+}
+
+const resetCategoryDragState = (): void => {
+  draggedCategoryId.value = null
+  dragOverCategoryId.value = null
+  dragOriginOrderIds.value = []
+}
+
+const cancelCategoryDrag = (): void => {
+  cleanupCategoryDragListeners()
+  visibleCategories.value = [...categories.value]
+  resetCategoryDragState()
+}
+
+const finishCategoryDrag = async (event: PointerEvent): Promise<void> => {
+  if (activeDragPointerId !== event.pointerId) {
+    return
+  }
+
+  event.preventDefault()
+  cleanupCategoryDragListeners()
+
+  const nextOrderIds = visibleCategories.value.map((category) => category.id)
+  const hasOrderChanged =
+    nextOrderIds.length !== dragOriginOrderIds.value.length ||
+    nextOrderIds.some(
+      (categoryId, index) => categoryId !== dragOriginOrderIds.value[index],
+    )
+
+  resetCategoryDragState()
+
+  if (!hasOrderChanged) {
+    visibleCategories.value = [...categories.value]
+    return
+  }
+
+  isReordering.value = true
+  reorderError.value = null
+
+  try {
+    await knowledgeBaseStore.reorderCategories(nextOrderIds)
+  } catch (error) {
+    visibleCategories.value = [...categories.value]
+    reorderError.value =
+      error instanceof Error ? error.message : 'Не удалось сохранить порядок тем.'
+  } finally {
+    isReordering.value = false
+  }
+}
+
+const startCategoryDrag = (
+  category: Category,
+  event: PointerEvent,
+): void => {
+  if (
+    isCategoryDragDisabled.value ||
+    (event.pointerType === 'mouse' && event.button !== 0)
+  ) {
+    return
+  }
+
+  event.preventDefault()
+  reorderError.value = null
+  activeDragPointerId = event.pointerId
+  draggedCategoryId.value = category.id
+  dragOverCategoryId.value = category.id
+  dragOriginOrderIds.value = visibleCategories.value.map(
+    (visibleCategory) => visibleCategory.id,
+  )
+
+  window.addEventListener('pointermove', handleCategoryDragMove, {
+    passive: false,
+  })
+  window.addEventListener('pointerup', finishCategoryDrag)
+  window.addEventListener('pointercancel', cancelCategoryDrag)
+}
+
+onBeforeUnmount(() => {
+  cleanupCategoryDragListeners()
+})
 </script>
 
 <template>
@@ -212,18 +396,37 @@ const reloadCategories = async (): Promise<void> => {
     </SurfaceCard>
 
     <SurfaceCard title="Список тем">
-      <div v-if="!categories.length" class="categories-page__empty">
+      <AppNotice
+        v-if="isReordering"
+        tone="loading"
+        title="Сохраняем порядок"
+        message="Фиксируем новый порядок тем на сервере."
+      />
+
+      <AppNotice
+        v-if="reorderError"
+        tone="error"
+        title="Не удалось сохранить порядок"
+        :message="reorderError"
+      />
+
+      <div v-if="!visibleCategories.length" class="categories-page__empty">
         Тем пока нет. Добавь первую тему, чтобы начать вести конспект.
       </div>
 
       <div v-else class="categories-page__list">
         <article
-          v-for="category in categories"
+          v-for="category in visibleCategories"
           :key="category.id"
           class="category-card"
           :class="{
             'category-card--editing': editingCategoryId === category.id,
+            'category-card--dragging': draggedCategoryId === category.id,
+            'category-card--drop-target':
+              dragOverCategoryId === category.id &&
+              draggedCategoryId !== category.id,
           }"
+          :data-category-id="category.id"
         >
           <div class="category-card__head">
             <div class="category-card__copy">
@@ -232,6 +435,16 @@ const reloadCategories = async (): Promise<void> => {
                 {{ category.description || 'Описание пока не заполнено.' }}
               </p>
             </div>
+
+            <button
+              class="category-card__drag-handle"
+              type="button"
+              :disabled="isCategoryDragDisabled"
+              :aria-label="`Изменить порядок темы ${category.name}`"
+              @pointerdown="startCategoryDrag(category, $event)"
+            >
+              <span class="category-card__drag-dots" aria-hidden="true"></span>
+            </button>
           </div>
 
           <div class="category-card__actions">
@@ -345,9 +558,76 @@ const reloadCategories = async (): Promise<void> => {
   box-shadow: 0 16px 28px rgba(31, 109, 90, 0.08);
 }
 
+.category-card--dragging {
+  opacity: 0.68;
+  transform: scale(0.985);
+  border-color: rgba(31, 109, 90, 0.48);
+  box-shadow: 0 18px 34px rgba(31, 109, 90, 0.14);
+}
+
+.category-card--drop-target {
+  border-color: rgba(232, 138, 69, 0.55);
+  box-shadow:
+    inset 0 0 0 2px rgba(232, 138, 69, 0.2),
+    0 16px 28px rgba(71, 50, 24, 0.08);
+}
+
+.category-card__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.72rem;
+}
+
 .category-card__copy {
   min-width: 0;
   flex: 1;
+}
+
+.category-card__drag-handle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgba(180, 154, 123, 0.28);
+  border-radius: 14px;
+  background: rgba(255, 250, 243, 0.86);
+  color: rgba(107, 91, 76, 0.8);
+  box-shadow: 0 8px 16px rgba(71, 50, 24, 0.06);
+  cursor: grab;
+  touch-action: none;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease;
+}
+
+.category-card__drag-handle:hover:not(:disabled),
+.category-card__drag-handle:focus-visible {
+  border-color: rgba(31, 109, 90, 0.34);
+  background: rgba(231, 242, 236, 0.88);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.category-card__drag-handle:active:not(:disabled) {
+  cursor: grabbing;
+  transform: translateY(0) scale(0.98);
+}
+
+.category-card__drag-handle:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.category-card__drag-dots {
+  width: 1rem;
+  height: 1.35rem;
+  background-image: radial-gradient(circle, currentColor 1.6px, transparent 1.8px);
+  background-position: 0 0;
+  background-size: 0.5rem 0.5rem;
 }
 
 .category-card__title {
@@ -378,7 +658,7 @@ const reloadCategories = async (): Promise<void> => {
 }
 
 @media (hover: hover) {
-  .category-card:hover {
+  .category-card:not(.category-card--dragging):hover {
     transform: translateY(-1px);
     border-color: rgba(31, 109, 90, 0.18);
     box-shadow: 0 16px 28px rgba(71, 50, 24, 0.09);

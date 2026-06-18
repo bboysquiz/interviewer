@@ -35,6 +35,10 @@ export interface UpdateCategoryInput {
   slug?: string
 }
 
+export interface ReorderCategoriesInput {
+  categoryIds: string[]
+}
+
 export interface CreateNoteInput {
   categoryId: string
   title: string
@@ -141,6 +145,12 @@ export const knowledgeBaseApi = {
 
   updateCategory: (categoryId: string, input: UpdateCategoryInput) =>
     requestJson<Category>(`${API_PATHS.categories}/${categoryId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
+
+  reorderCategories: (input: ReorderCategoriesInput) =>
+    requestJson<Category[]>(`${API_PATHS.categories}/order`, {
       method: 'PATCH',
       body: JSON.stringify(input),
     }),

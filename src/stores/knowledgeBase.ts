@@ -9,7 +9,11 @@ import {
 import type { Category } from '@/types'
 
 const sortCategories = (value: Category[]): Category[] =>
-  [...value].sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+  [...value].sort((left, right) => {
+    const orderDiff = left.sortOrder - right.sortOrder
+
+    return orderDiff || left.name.localeCompare(right.name, 'ru')
+  })
 
 export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
   const categories = ref<Category[]>([])
@@ -18,6 +22,25 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
   const loadError = ref<string | null>(null)
 
   const totalCategories = computed(() => categories.value.length)
+
+  const applyCategoryOrder = (categoryIds: string[]): void => {
+    const categoriesById = new Map(
+      categories.value.map((category) => [category.id, category]),
+    )
+    const orderedCategories = categoryIds
+      .map((categoryId) => categoriesById.get(categoryId))
+      .filter((category): category is Category => Boolean(category))
+    const remainingCategories = categories.value.filter(
+      (category) => !categoryIds.includes(category.id),
+    )
+
+    categories.value = [...orderedCategories, ...remainingCategories].map(
+      (category, index) => ({
+        ...category,
+        sortOrder: index,
+      }),
+    )
+  }
 
   const loadCategories = async (): Promise<void> => {
     if (isLoading.value) {
@@ -61,6 +84,21 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
     return updated
   }
 
+  const reorderCategories = async (categoryIds: string[]): Promise<void> => {
+    const previousCategories = categories.value
+
+    applyCategoryOrder(categoryIds)
+
+    try {
+      categories.value = sortCategories(
+        await knowledgeBaseApi.reorderCategories({ categoryIds }),
+      )
+    } catch (error) {
+      categories.value = previousCategories
+      throw error
+    }
+  }
+
   const deleteCategory = async (categoryId: string): Promise<void> => {
     await knowledgeBaseApi.deleteCategory(categoryId)
     categories.value = categories.value.filter(
@@ -84,6 +122,8 @@ export const useKnowledgeBaseStore = defineStore('knowledge-base', () => {
     loadCategories,
     createCategory,
     updateCategory,
+    applyCategoryOrder,
+    reorderCategories,
     deleteCategory,
     resetState,
   }
