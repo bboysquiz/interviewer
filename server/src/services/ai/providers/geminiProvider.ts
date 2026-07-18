@@ -746,7 +746,7 @@ const generateInterviewQuestion = async (
     generationConfig: {
       responseMimeType: 'application/json',
       responseJsonSchema: interviewQuestionSchema,
-      maxOutputTokens: 1000,
+      maxOutputTokens: 1400,
     },
   })
   const rawOutput = extractResponseText(
@@ -776,7 +776,7 @@ const evaluateInterviewAnswer = async (
 ): Promise<EvaluateInterviewAnswerResult> => {
   if (!input.questionPrompt.trim() || !input.answerText.trim()) {
     throw new AiServiceError(
-      'Question prompt and answer text are required for evaluation.',
+      'Interview prompt and user response are required for evaluation.',
       {
         status: 400,
         code: 'ai_validation_error',

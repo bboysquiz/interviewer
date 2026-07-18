@@ -232,5 +232,7 @@ const improvementText = computed(() => {
   color: var(--text-muted);
   font-size: 0.92rem;
   line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

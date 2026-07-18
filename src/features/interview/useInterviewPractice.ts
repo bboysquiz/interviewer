@@ -114,12 +114,12 @@ const MODE_OPTIONS: InterviewModeOption[] = [
   {
     id: 'category',
     title: 'По категории',
-    description: 'Быстрый вопрос по выбранной теме без лишних шагов.',
+    description: 'Быстрое задание по выбранной теме без лишних шагов.',
   },
   {
     id: 'note',
     title: 'По заметке',
-    description: 'Точный вопрос по конкретной заметке или конспекту.',
+    description: 'Точное задание по конкретной заметке или конспекту.',
   },
 ]
 
@@ -127,7 +127,7 @@ const SECTION_OPTIONS: InterviewSectionOption[] = [
   {
     id: 'full',
     title: 'Полный собес',
-    description: 'Несколько вопросов подряд, таймер и общая сводка по сессии.',
+    description: 'Несколько заданий подряд, таймер и общая сводка по сессии.',
   },
   {
     id: 'weak_spots',
@@ -137,7 +137,7 @@ const SECTION_OPTIONS: InterviewSectionOption[] = [
   {
     id: 'quick',
     title: 'Быстрая тренировка',
-    description: 'Один вопрос и мгновенная проверка без длинной сессии.',
+    description: 'Одно задание и мгновенная проверка без длинной сессии.',
   },
 ]
 
@@ -145,8 +145,8 @@ const buildGenerationErrorMessage = (
   mode: InterviewPracticeMode,
 ): string =>
   mode === 'category'
-    ? 'Выбери категорию перед генерацией вопроса.'
-    : 'Выбери категорию и заметку перед генерацией вопроса.'
+    ? 'Выбери категорию перед генерацией задания.'
+    : 'Выбери категорию и заметку перед генерацией задания.'
 
 const toProviderInfo = (rawModel: string | null | undefined): QuestionProviderInfo | null => {
   const normalizedRawModel = rawModel?.trim() ?? ''
@@ -505,12 +505,12 @@ export const useInterviewPractice = () => {
   const sourceSummary = computed(() => {
     if (interviewMode.value === 'category') {
       return selectedCategory.value
-        ? `Вопрос будет построен по теме ${selectedCategory.value.name}.`
-        : 'Выбери категорию, чтобы сгенерировать вопрос.'
+        ? `Задание будет построено по теме ${selectedCategory.value.name}.`
+        : 'Выбери категорию, чтобы сгенерировать задание.'
     }
 
     if (selectedNote.value) {
-      return `Для вопроса будет использована заметка «${selectedNote.value.title}».`
+      return `Для задания будет использована заметка «${selectedNote.value.title}».`
     }
 
     if (!selectedCategoryId.value) {
@@ -521,7 +521,7 @@ export const useInterviewPractice = () => {
       return 'Загружаем заметки для выбранной категории.'
     }
 
-    return 'Выбери заметку, чтобы получить более точный вопрос.'
+    return 'Выбери заметку, чтобы получить более точное задание.'
   })
 
   const questionSources = computed(
@@ -713,7 +713,7 @@ export const useInterviewPractice = () => {
         activeQuestionUtterance = null
       }
       isQuestionSpeaking.value = false
-      voiceFeatureError.value = 'Не удалось озвучить вопрос в этом браузере.'
+      voiceFeatureError.value = 'Не удалось озвучить задание в этом браузере.'
     }
 
     activeQuestionUtterance = utterance
@@ -724,7 +724,7 @@ export const useInterviewPractice = () => {
     } catch {
       activeQuestionUtterance = null
       isQuestionSpeaking.value = false
-      voiceFeatureError.value = 'Не удалось запустить озвучку вопроса.'
+      voiceFeatureError.value = 'Не удалось запустить озвучку задания.'
     }
   }
 
@@ -918,7 +918,7 @@ export const useInterviewPractice = () => {
       generationError.value =
         error instanceof Error
           ? error.message
-          : 'Не удалось сгенерировать вопрос.'
+          : 'Не удалось сгенерировать задание.'
       return null
     } finally {
       isGenerating.value = false
@@ -1063,7 +1063,7 @@ export const useInterviewPractice = () => {
     stopAnswerListening()
 
     if (!questionResponse.value) {
-      evaluationError.value = 'Сначала сгенерируй вопрос.'
+      evaluationError.value = 'Сначала сгенерируй задание.'
       return
     }
 

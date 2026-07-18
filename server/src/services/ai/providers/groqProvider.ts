@@ -477,7 +477,7 @@ const generateInterviewQuestion = async (
 
   return runGroqModelCandidates(
     GROQ_INTERVIEW_QUESTION_MODELS,
-    'interview question generation',
+    'interview prompt generation',
     async (model) => {
       const completion = await callGroqChatCompletion({
         model,
@@ -487,6 +487,7 @@ const generateInterviewQuestion = async (
             content: [
               buildInterviewQuestionSystemPrompt(),
               'Return only one JSON object with keys question, rationale, expected_topics, difficulty, and source_indexes.',
+              'The question key must contain the complete interview prompt, whether it is a conceptual question or a practical task.',
             ].join('\n\n'),
           },
           {
@@ -497,7 +498,7 @@ const generateInterviewQuestion = async (
         response_format: {
           type: 'json_object',
         },
-        max_completion_tokens: 900,
+        max_completion_tokens: 1400,
       })
 
       const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
@@ -533,7 +534,7 @@ const evaluateInterviewAnswer = async (
 ): Promise<EvaluateInterviewAnswerResult> => {
   if (!input.questionPrompt.trim() || !input.answerText.trim()) {
     throw new AiServiceError(
-      'Question prompt and answer text are required for evaluation.',
+      'Interview prompt and user response are required for evaluation.',
       {
         status: 400,
         code: 'ai_validation_error',

@@ -83,10 +83,10 @@ const openFoundationImage = (
 
   openImageViewer({
     src: item.imageUrl,
-    alt: 'Основа вопроса',
+    alt: 'Основа задания',
     title: item.lastQuestionedLabel
-      ? `Основа вопроса · ${item.lastQuestionedLabel}`
-      : 'Основа вопроса',
+      ? `Основа задания · ${item.lastQuestionedLabel}`
+      : 'Основа задания',
   })
 }
 
@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
           v-if="isCategoriesLoading && !hasCategories"
           tone="loading"
           title="Загружаем категории"
-          message="Подтягиваем темы и заметки, чтобы собрать вопрос по твоей базе знаний."
+          message="Подтягиваем темы и заметки, чтобы собрать задание по твоей базе знаний."
         />
 
         <AppNotice
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
 
         <div v-if="!hasCategories" class="interview-page__empty">
           Сначала создай хотя бы одну категорию и заметку, чтобы собеседование
-          получило материал для вопросов.
+          получило материал для заданий.
         </div>
 
         <template v-else>
@@ -237,7 +237,7 @@ onBeforeUnmount(() => {
                 :disabled="!canGenerateNextFullInterviewQuestion"
                 @click="void generateNextFullInterviewQuestion()"
               >
-                {{ isGenerating ? 'Генерируем...' : 'Следующий вопрос' }}
+                {{ isGenerating ? 'Генерируем...' : 'Следующее задание' }}
               </button>
 
               <button
@@ -259,21 +259,21 @@ onBeforeUnmount(() => {
               :disabled="!canGenerateQuestion"
               @click="void generateQuestion()"
             >
-              {{ isGenerating ? 'Генерируем...' : 'Сгенерировать вопрос' }}
+              {{ isGenerating ? 'Генерируем...' : 'Сгенерировать задание' }}
             </button>
           </div>
 
           <AppNotice
             v-if="isGenerating"
             tone="loading"
-            title="Генерируем вопрос"
+            title="Генерируем задание"
             message="Сервер собирает релевантные фрагменты базы знаний и отправляет их в AI-модель."
           />
 
           <AppNotice
             v-if="generationError"
             tone="error"
-            title="Вопрос не сгенерирован"
+            title="Задание не сгенерировано"
             :message="generationError"
             compact
           />
@@ -312,7 +312,7 @@ onBeforeUnmount(() => {
         </div>
       </SurfaceCard>
 
-      <SurfaceCard v-if="questionResponse" eyebrow="Вопрос">
+      <SurfaceCard v-if="questionResponse" eyebrow="Задание">
         <div class="tag-row interview-page__question-meta">
           <span
             v-if="questionProvider"
@@ -339,7 +339,7 @@ onBeforeUnmount(() => {
             type="button"
             @click="speakQuestion()"
           >
-            {{ isQuestionSpeaking ? 'Остановить озвучку' : 'Озвучить вопрос' }}
+            {{ isQuestionSpeaking ? 'Остановить озвучку' : 'Озвучить задание' }}
           </button>
         </div>
 
@@ -354,8 +354,8 @@ onBeforeUnmount(() => {
           >
             {{
               isQuestionFoundationVisible
-                ? 'Скрыть основу вопроса'
-                : 'Показать основу вопроса'
+                ? 'Скрыть основу задания'
+                : 'Показать основу задания'
             }}
           </button>
 
@@ -371,7 +371,7 @@ onBeforeUnmount(() => {
               <img
                 v-if="item.imageUrl"
                 :src="item.imageUrl"
-                alt="Основа вопроса"
+                alt="Основа задания"
                 class="interview-page__foundation-image"
                 @click="openFoundationImage(item)"
               />
@@ -393,7 +393,7 @@ onBeforeUnmount(() => {
           <InterviewAnswerComposer
             v-model="answerText"
             :disabled="isEvaluating"
-            placeholder="Напиши ответ так, как сказал бы его на интервью."
+            placeholder="Напиши ответ или код. Для многострочного решения сохраняй форматирование."
           />
         </label>
 
@@ -571,6 +571,8 @@ onBeforeUnmount(() => {
   font-size: 1.04rem;
   font-weight: 700;
   line-height: 1.42;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .interview-page__provider-badge {

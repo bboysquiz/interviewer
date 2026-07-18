@@ -49,7 +49,7 @@ const sessionCards = computed(() =>
       sourceLabel: getInterviewHistorySourceLabel(record.session),
       categoryName,
       dateLabel: formatInterviewHistoryDate(getInterviewHistoryOccurredAt(record)),
-      questionPrompt: question?.prompt ?? 'Вопрос не найден.',
+      questionPrompt: question?.prompt ?? 'Задание не найдено.',
       summary:
         evaluation?.overallSummary ??
         evaluation?.knowledgeBase.comment ??
@@ -87,7 +87,7 @@ onMounted(async () => {
   <div class="page-stack history-page">
     <SurfaceCard eyebrow="Журнал" title="История интервью-попыток">
       <p class="lead">
-        Здесь сохраняются прошлые вопросы, ответы, оценки и исправленные
+        Здесь сохраняются прошлые задания, ответы, оценки и исправленные
         формулировки, чтобы можно было быстро вернуться к неудачным местам.
       </p>
 
@@ -224,8 +224,8 @@ onMounted(async () => {
       title="История появится после первой проверки"
     >
       <div class="history-page__state">
-        Сгенерируй вопрос в режиме собеседования, ответь на него и проверь
-        ответ. После этого попытка появится здесь.
+        Сгенерируй задание в режиме собеседования, выполни его и отправь ответ
+        на проверку. После этого попытка появится здесь.
       </div>
     </SurfaceCard>
 
@@ -432,6 +432,8 @@ onMounted(async () => {
 .history-page__question {
   color: var(--text);
   font-weight: 700;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .history-page__scores {

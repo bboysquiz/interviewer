@@ -88,7 +88,7 @@ onMounted(async () => {
       title="Открываем попытку"
     >
       <div class="history-detail-page__state">
-        Загружаем вопрос, ответ и результаты прошлой сессии.
+        Загружаем задание, ответ и результаты прошлой сессии.
       </div>
     </SurfaceCard>
 
@@ -146,9 +146,9 @@ onMounted(async () => {
         </section>
       </SurfaceCard>
 
-      <SurfaceCard eyebrow="Вопрос" title="Что спросили">
+      <SurfaceCard eyebrow="Задание" title="Что нужно было сделать">
         <p class="history-detail-page__question">
-          {{ question?.prompt ?? 'Вопрос для этой попытки не найден.' }}
+          {{ question?.prompt ?? 'Задание для этой попытки не найдено.' }}
         </p>
       </SurfaceCard>
 
@@ -313,12 +313,16 @@ onMounted(async () => {
   color: var(--text);
   font-size: 1rem;
   font-weight: 700;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .history-detail-page__answer,
 .history-detail-page__improved-answer {
   color: var(--text);
   font-size: 0.94rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .history-detail-page__answer--muted,
