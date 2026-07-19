@@ -100,7 +100,7 @@ export const GEMINI_INTERVIEW_EVALUATION_MODEL =
   process.env.GEMINI_INTERVIEW_EVALUATION_MODEL ?? 'gemini-3.1-flash-lite-preview'
 export const GROQ_API_KEY = process.env.GROQ_API_KEY ?? ''
 export const GROQ_VISION_MODEL =
-  process.env.GROQ_VISION_MODEL ?? 'meta-llama/llama-4-scout-17b-16e-instruct'
+  process.env.GROQ_VISION_MODEL ?? 'qwen/qwen3.6-27b'
 export const GROQ_INTERVIEW_QUESTION_MODEL =
   process.env.GROQ_INTERVIEW_QUESTION_MODEL ?? 'llama-3.3-70b-versatile'
 export const GROQ_INTERVIEW_EVALUATION_MODEL =

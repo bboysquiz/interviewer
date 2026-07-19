@@ -32,7 +32,7 @@ The backend loads the root `.env` first, then `server/.env`. Values from `server
 | `GEMINI_INTERVIEW_QUESTION_MODEL` | no | `gemini-3.1-flash-lite-preview` | Gemini model for question generation and note tasks. |
 | `GEMINI_INTERVIEW_EVALUATION_MODEL` | no | `gemini-3.1-flash-lite-preview` | Gemini model for answer evaluation. |
 | `GROQ_API_KEY` | yes for Groq | empty | Groq API key. |
-| `GROQ_VISION_MODEL` | no | `meta-llama/llama-4-scout-17b-16e-instruct` | Groq model for screenshot analysis. |
+| `GROQ_VISION_MODEL` | no | `qwen/qwen3.6-27b` | Groq model for screenshot analysis. |
 | `GROQ_VISION_MODEL_FALLBACKS` | no | empty | Extra comma-separated Groq vision fallback models. |
 | `GROQ_INTERVIEW_QUESTION_MODEL` | no | `llama-3.3-70b-versatile` | Groq model for question generation and note tasks. |
 | `GROQ_INTERVIEW_QUESTION_MODEL_FALLBACKS` | no | `llama-3.1-8b-instant` | Groq text fallback models. |

@@ -162,7 +162,7 @@ GEMINI_INTERVIEW_QUESTION_MODEL=gemini-3.1-flash-lite-preview
 GEMINI_INTERVIEW_EVALUATION_MODEL=gemini-3.1-flash-lite-preview
 
 GROQ_API_KEY=your_groq_key
-GROQ_VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
+GROQ_VISION_MODEL=qwen/qwen3.6-27b
 GROQ_INTERVIEW_QUESTION_MODEL=llama-3.3-70b-versatile
 GROQ_INTERVIEW_EVALUATION_MODEL=llama-3.3-70b-versatile
 
