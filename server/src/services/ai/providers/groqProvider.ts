@@ -81,6 +81,7 @@ interface GroqErrorBody {
 }
 
 const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions'
+const GROQ_REQUEST_TIMEOUT_MS = 30_000
 
 const ensureGroqConfigured = (): void => {
   if (!GROQ_API_KEY) {
@@ -186,6 +187,8 @@ const callGroqChatCompletion = async (
       type: 'json_object'
     }
     max_completion_tokens?: number
+    temperature?: number
+    reasoning_effort?: 'none'
   },
 ): Promise<GroqChatCompletionResponse> => {
   ensureGroqConfigured()
@@ -197,6 +200,7 @@ const callGroqChatCompletion = async (
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(GROQ_REQUEST_TIMEOUT_MS),
   })
   const responseText = await response.text()
   const responseBody = parseJsonObject(responseText)
@@ -330,6 +334,86 @@ const extractMessageText = (content: unknown): string => {
     .trim()
 }
 
+const IMAGE_ANALYSIS_MARKERS = {
+  extractedText: '<<<EXTRACTED_TEXT>>>',
+  imageDescription: '<<<IMAGE_DESCRIPTION>>>',
+  keyTerms: '<<<KEY_TERMS>>>',
+} as const
+
+type ImageAnalysisSection = keyof typeof IMAGE_ANALYSIS_MARKERS
+
+const buildGroqImageAnalysisInstructions = (): string =>
+  [
+    'Return plain text only using these marker lines exactly:',
+    IMAGE_ANALYSIS_MARKERS.extractedText,
+    '<all visible text verbatim; preserve line breaks and indentation>',
+    IMAGE_ANALYSIS_MARKERS.imageDescription,
+    '<concise description>',
+    IMAGE_ANALYSIS_MARKERS.keyTerms,
+    '<one short technical term per line>',
+    'Do not use JSON, XML, Markdown fences, or closing markers.',
+  ].join('\n')
+
+const parseGroqImageAnalysisText = (
+  rawOutput: string,
+): Record<string, unknown> => {
+  const sections: Record<ImageAnalysisSection, string[]> = {
+    extractedText: [],
+    imageDescription: [],
+    keyTerms: [],
+  }
+  const markerToSection = new Map<string, ImageAnalysisSection>(
+    Object.entries(IMAGE_ANALYSIS_MARKERS).map(([section, marker]) => [
+      marker,
+      section as ImageAnalysisSection,
+    ]),
+  )
+  let currentSection: ImageAnalysisSection | null = null
+  let foundMarker = false
+
+  for (const line of rawOutput.split(/\r?\n/)) {
+    const markerSection = markerToSection.get(line.trim())
+
+    if (markerSection) {
+      currentSection = markerSection
+      foundMarker = true
+      continue
+    }
+
+    if (currentSection) {
+      sections[currentSection].push(line)
+    }
+  }
+
+  if (foundMarker) {
+    const keyTerms = sections.keyTerms
+      .flatMap((line) => line.split(/[,;]/))
+      .map((term) =>
+        term.replace(/^(?:[-*•]\s*|\d+[.)]\s*)/, '').trim(),
+      )
+      .filter(Boolean)
+
+    return {
+      extracted_text: sections.extractedText.join('\n').trim(),
+      image_description: sections.imageDescription.join('\n').trim(),
+      key_terms: keyTerms,
+    }
+  }
+
+  try {
+    return parseStructuredRecord(
+      rawOutput,
+      'Groq returned invalid JSON for image analysis.',
+    )
+  } catch {
+    return {
+      extracted_text: rawOutput.trim(),
+      image_description: '',
+      key_terms: [],
+    }
+  }
+}
+
 const shouldRetryWithoutStructuredJson = (error: unknown): boolean => {
   if (!(error instanceof AiServiceError)) {
     return false
@@ -421,7 +505,7 @@ const analyzeImageForKnowledgeBase = async (
               type: 'text',
               text: [
                 buildImageAnalysisPrompt(input),
-                'Return only one JSON object with keys extracted_text, image_description, and key_terms.',
+                buildGroqImageAnalysisInstructions(),
               ].join('\n\n'),
             },
             {
@@ -433,10 +517,11 @@ const analyzeImageForKnowledgeBase = async (
           ],
         },
       ],
-      response_format: {
-        type: 'json_object',
-      },
-      max_completion_tokens: 1200,
+      max_completion_tokens: 2400,
+      temperature: 0,
+      ...(model === 'qwen/qwen3.6-27b'
+        ? { reasoning_effort: 'none' as const }
+        : {}),
     })
 
     const rawOutput = extractMessageText(completion.choices?.[0]?.message?.content)
@@ -451,10 +536,7 @@ const analyzeImageForKnowledgeBase = async (
       )
     }
 
-    const record = parseStructuredRecord(
-      rawOutput,
-      'Groq returned invalid JSON for image analysis.',
-    )
+    const record = parseGroqImageAnalysisText(rawOutput)
 
     return buildImageAnalysisResult(
       record,

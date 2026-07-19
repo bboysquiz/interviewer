@@ -1,5 +1,6 @@
 import https from 'node:https'
 import { randomBytes } from 'node:crypto'
+import { lookup as systemDnsLookup } from 'node:dns'
 import type { LookupAddress, LookupOptions } from 'node:dns'
 import { Resolver } from 'node:dns/promises'
 
@@ -521,6 +522,53 @@ const buildDohLookup = (): GeminiLookupFunction | null => {
   )
 }
 
+const buildSystemLookup = (): GeminiLookupFunction =>
+  (hostname, options, callback): void => {
+    systemDnsLookup(hostname, options as never, callback as never)
+  }
+
+const buildFallbackLookup = (
+  lookups: GeminiLookupFunction[],
+): GeminiLookupFunction =>
+  (hostname, options, callback): void => {
+    let lookupIndex = 0
+    let lastError: NodeJS.ErrnoException | null = null
+
+    const tryNextLookup = (): void => {
+      const lookup = lookups[lookupIndex]
+      lookupIndex += 1
+
+      if (!lookup) {
+        if (shouldReturnAllAddresses(options)) {
+          callback(
+            lastError ?? toLookupError('All DNS lookup methods failed.'),
+            [],
+          )
+          return
+        }
+
+        callback(
+          lastError ?? toLookupError('All DNS lookup methods failed.'),
+          '',
+          0,
+        )
+        return
+      }
+
+      lookup(hostname, options, (error, address, family) => {
+        if (!error) {
+          callback(null, address, family)
+          return
+        }
+
+        lastError = error
+        tryNextLookup()
+      })
+    }
+
+    tryNextLookup()
+  }
+
 let cachedGeminiLookup: GeminiLookupFunction | null | undefined
 
 const getGeminiLookup = (): GeminiLookupFunction | undefined => {
@@ -528,10 +576,43 @@ const getGeminiLookup = (): GeminiLookupFunction | undefined => {
     return cachedGeminiLookup ?? undefined
   }
 
+  const customLookups = [buildDohLookup(), buildResolverLookup()].filter(
+    (lookup): lookup is GeminiLookupFunction => lookup !== null,
+  )
+
   cachedGeminiLookup =
-    buildDohLookup() ?? buildResolverLookup() ?? null
+    customLookups.length > 0
+      ? buildFallbackLookup([...customLookups, buildSystemLookup()])
+      : null
 
   return cachedGeminiLookup ?? undefined
+}
+
+const toGeminiNetworkError = (error: unknown, model: string): AiServiceError => {
+  if (error instanceof AiServiceError) {
+    return error
+  }
+
+  const message = error instanceof Error ? error.message : 'Unknown network error.'
+  const causeCode =
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string'
+      ? error.code
+      : null
+
+  return new AiServiceError(`Gemini network request failed: ${message}`, {
+    status: 502,
+    code: 'ai_upstream_error',
+    details: {
+      provider: 'gemini',
+      model,
+      ...(causeCode ? { causeCode } : {}),
+      customDohUrl: GEMINI_DOH_URL || null,
+      customDnsServers: GEMINI_DNS_SERVERS,
+    },
+  })
 }
 
 const callGemini = async (
@@ -542,51 +623,57 @@ const callGemini = async (
 
   const requestBody = JSON.stringify(body)
   const geminiLookup = getGeminiLookup()
-  const response = await new Promise<{
-    statusCode: number
-    bodyText: string
-  }>((resolve, reject) => {
-    const request = https.request(
-      {
-        protocol: 'https:',
-        hostname: GEMINI_HOSTNAME,
-        port: 443,
-        method: 'POST',
-        path: `/v1beta/models/${model}:generateContent`,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(requestBody),
-          'x-goog-api-key': GEMINI_API_KEY,
+  let response: { statusCode: number; bodyText: string }
+
+  try {
+    response = await new Promise<{
+      statusCode: number
+      bodyText: string
+    }>((resolve, reject) => {
+      const request = https.request(
+        {
+          protocol: 'https:',
+          hostname: GEMINI_HOSTNAME,
+          port: 443,
+          method: 'POST',
+          path: `/v1beta/models/${model}:generateContent`,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(requestBody),
+            'x-goog-api-key': GEMINI_API_KEY,
+          },
+          servername: GEMINI_HOSTNAME,
+          lookup: geminiLookup as never,
         },
-        servername: GEMINI_HOSTNAME,
-        lookup: geminiLookup as never,
-      },
-      (responseMessage) => {
-        const chunks: Buffer[] = []
+        (responseMessage) => {
+          const chunks: Buffer[] = []
 
-        responseMessage.on('data', (chunk: Buffer | string) => {
-          chunks.push(
-            typeof chunk === 'string' ? Buffer.from(chunk) : chunk,
-          )
-        })
-
-        responseMessage.on('end', () => {
-          resolve({
-            statusCode: responseMessage.statusCode ?? 500,
-            bodyText: Buffer.concat(chunks).toString('utf8'),
+          responseMessage.on('data', (chunk: Buffer | string) => {
+            chunks.push(
+              typeof chunk === 'string' ? Buffer.from(chunk) : chunk,
+            )
           })
-        })
-      },
-    )
 
-    request.setTimeout(GEMINI_REQUEST_TIMEOUT_MS, () => {
-      request.destroy(new Error('Gemini request timed out.'))
+          responseMessage.on('end', () => {
+            resolve({
+              statusCode: responseMessage.statusCode ?? 500,
+              bodyText: Buffer.concat(chunks).toString('utf8'),
+            })
+          })
+        },
+      )
+
+      request.setTimeout(GEMINI_REQUEST_TIMEOUT_MS, () => {
+        request.destroy(new Error('Gemini request timed out.'))
+      })
+
+      request.on('error', reject)
+      request.write(requestBody)
+      request.end()
     })
-
-    request.on('error', reject)
-    request.write(requestBody)
-    request.end()
-  })
+  } catch (error) {
+    throw toGeminiNetworkError(error, model)
+  }
 
   let parsedBody: GeminiGenerateContentResponse | GeminiErrorBody | null = null
 

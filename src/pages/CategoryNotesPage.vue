@@ -102,7 +102,7 @@ const normalizeProcessingError = (
   }
 
   if (
-    ['request too large', 'context length', 'tokens per minute', 'tpm'].some(
+    ['request too large', 'context length'].some(
       (pattern) => lowerCased.includes(pattern),
     )
   ) {
@@ -119,11 +119,24 @@ const normalizeProcessingError = (
       'resource exhausted',
       'too many requests',
       'exceeded your current quota',
+      'tokens per minute',
+      'tpm',
     ].some((pattern) => lowerCased.includes(pattern))
   ) {
     return {
       key: 'quota',
       label: 'AI-провайдер упёрся в лимит или квоту',
+    }
+  }
+
+  if (
+    ['failed to generate json', 'failed to validate json'].some((pattern) =>
+      lowerCased.includes(pattern),
+    )
+  ) {
+    return {
+      key: 'invalid_ai_json',
+      label: 'AI-провайдер не смог сформировать структурированный ответ',
     }
   }
 

@@ -30,19 +30,45 @@ const delay = async (milliseconds: number): Promise<void> => {
 }
 
 const extractRetryDelayMs = (message: string): number | null => {
-  const retryDelayMatch = message.match(/retry in (\d+(?:\.\d+)?)s/i)
+  const retryDelayMatch = message.match(
+    /(?:retry|try again) in\s+([0-9hms.]+)/i,
+  )
 
   if (!retryDelayMatch) {
     return null
   }
 
-  const seconds = Number.parseFloat(retryDelayMatch[1])
+  const durationPattern = /(\d+(?:\.\d+)?)(ms|h|m|s)/gi
+  let durationMs = 0
+  let matchedDuration = false
+  let durationMatch: RegExpExecArray | null = null
 
-  if (!Number.isFinite(seconds) || seconds <= 0) {
+  while ((durationMatch = durationPattern.exec(retryDelayMatch[1])) !== null) {
+    const amount = Number.parseFloat(durationMatch[1])
+    const unit = durationMatch[2].toLowerCase()
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      continue
+    }
+
+    matchedDuration = true
+
+    if (unit === 'h') {
+      durationMs += amount * 60 * 60 * 1000
+    } else if (unit === 'm') {
+      durationMs += amount * 60 * 1000
+    } else if (unit === 's') {
+      durationMs += amount * 1000
+    } else {
+      durationMs += amount
+    }
+  }
+
+  if (!matchedDuration || durationMs <= 0) {
     return null
   }
 
-  return Math.ceil(seconds * 1000)
+  return Math.ceil(durationMs + 1_000)
 }
 
 const isRetryableAnalyzeError = (error: unknown): boolean => {
@@ -54,6 +80,7 @@ const isRetryableAnalyzeError = (error: unknown): boolean => {
 
   return [
     'retry in ',
+    'try again in ',
     'quota',
     'rate limit',
     'too many requests',
@@ -64,6 +91,21 @@ const isRetryableAnalyzeError = (error: unknown): boolean => {
     'bad gateway',
     'timed out',
     'timeout',
+    'network request failed',
+    'fetch failed',
+    'dns',
+    'econnreset',
+    'econnrefused',
+    'enotfound',
+    'eai_again',
+    'ednslookup',
+    'etimedout',
+    'ehostunreach',
+    'enetunreach',
+    'tokens per minute',
+    'tpm',
+    'failed to generate json',
+    'failed to validate json',
   ].some((pattern) => normalizedMessage.includes(pattern))
 }
 
@@ -81,11 +123,19 @@ const resolveRetryDelayMs = (error: unknown, attempt: number): number => {
   const normalizedMessage = error.message.toLowerCase()
 
   if (
-    ['quota', 'rate limit', 'too many requests', 'resource exhausted'].some((pattern) =>
-      normalizedMessage.includes(pattern),
-    )
+    [
+      'quota',
+      'rate limit',
+      'too many requests',
+      'resource exhausted',
+      'tokens per minute',
+      'tpm',
+    ].some((pattern) => normalizedMessage.includes(pattern))
   ) {
-    return Math.min(60_000, 15_000 * attempt)
+    return normalizedMessage.includes('tokens per minute') ||
+      normalizedMessage.includes('tpm')
+      ? 60_000
+      : Math.min(60_000, 15_000 * attempt)
   }
 
   if (

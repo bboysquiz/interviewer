@@ -1,4 +1,3 @@
-import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { UPLOADS_DIR } from '../config.js'
@@ -9,6 +8,7 @@ import { nowIso } from '../lib/text.js'
 import { createAnalyticsRepository } from './analyticsRepository.js'
 import { analyzeImageForKnowledgeBase } from './ai/aiService.js'
 import { AiServiceError } from './ai/errors.js'
+import { prepareImageForAi } from './ai/imagePreparation.js'
 
 interface AttachmentAnalysisRow {
   id: string
@@ -70,14 +70,6 @@ const parseProviderFromModel = (model: string): string => {
   }
 
   return normalized.slice(0, separatorIndex)
-}
-
-const encodeImageAsDataUrl = async (
-  filePath: string,
-  mimeType: string,
-): Promise<string> => {
-  const fileBuffer = await fs.readFile(filePath)
-  return `data:${mimeType};base64,${fileBuffer.toString('base64')}`
 }
 
 const markAttachmentAsFailed = (
@@ -144,12 +136,9 @@ export const analyzeAttachmentWithAi = async (
 
   try {
     const imagePath = path.join(UPLOADS_DIR, attachment.stored_file_name)
-    const imageDataUrl = await encodeImageAsDataUrl(
-      imagePath,
-      attachment.mime_type,
-    )
+    const preparedImage = await prepareImageForAi(imagePath)
     const analysis = await analyzeImageForKnowledgeBase({
-      imageDataUrl,
+      imageDataUrl: preparedImage.dataUrl,
     })
     const extractedText = normalizeOptionalString(analysis.extractedText)
     const imageDescription = normalizeOptionalString(analysis.imageDescription)

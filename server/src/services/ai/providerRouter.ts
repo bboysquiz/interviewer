@@ -236,6 +236,8 @@ const isQuotaLimitedAiError = (error: AiServiceError): boolean => {
     'too many requests',
     'resource exhausted',
     'exceeded your current quota',
+    'tokens per minute',
+    'tpm',
   ].some((pattern) => normalizedMessage.includes(pattern))
 }
 
@@ -265,11 +267,25 @@ const isTemporaryUpstreamAiError = (error: AiServiceError): boolean => {
 
 const isRetryableAiError = (error: unknown): boolean => {
   if (error instanceof Error && !(error instanceof AiServiceError)) {
-    const normalizedMessage = error.message.toLowerCase()
+    const errorCode =
+      'code' in error && typeof error.code === 'string' ? error.code : ''
+    const normalizedMessage = `${error.name} ${error.message} ${errorCode}`.toLowerCase()
 
-    return ['timed out', 'timeout', 'socket hang up', 'econnreset'].some(
-      (pattern) => normalizedMessage.includes(pattern),
-    )
+    return [
+      'timed out',
+      'timeout',
+      'socket hang up',
+      'fetch failed',
+      'dns',
+      'econnreset',
+      'econnrefused',
+      'enotfound',
+      'eai_again',
+      'ednslookup',
+      'etimedout',
+      'ehostunreach',
+      'enetunreach',
+    ].some((pattern) => normalizedMessage.includes(pattern))
   }
 
   if (!(error instanceof AiServiceError)) {
@@ -436,16 +452,17 @@ const withProviderFallback = async <T>(
       markAiProviderFailure(task, provider.name, error)
 
       const hasNextProvider = index < taskProviders.length - 1
+      const isRetryable = isRetryableAiErrorForTask(task, error)
 
-      if (!hasNextProvider || !isRetryableAiErrorForTask(task, error)) {
+      if (isRetryable && error instanceof AiServiceError) {
+        markProviderCooldown(task, provider.name, error)
+      }
+
+      if (!hasNextProvider || !isRetryable) {
         console.warn(
           `AI provider "${provider.name}" failed for ${task} with no further fallback. ${formatFallbackReason(error)}`,
         )
         throw error
-      }
-
-      if (error instanceof AiServiceError) {
-        markProviderCooldown(task, provider.name, error)
       }
 
       console.warn(
