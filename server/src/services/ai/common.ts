@@ -56,7 +56,7 @@ export const interviewQuestionSchema = {
     question: {
       type: 'string',
       description:
-        'One self-contained technical interview prompt: either a conceptual question or a practical task.',
+        'One self-contained technical interview prompt. Any code must be inside a Markdown fenced code block with a language identifier.',
     },
     rationale: {
       type: 'string',
@@ -307,7 +307,9 @@ export const buildInterviewQuestionSystemPrompt = (): string =>
     'Every practical task must be objectively checkable and include all code, inputs, constraints, and environment details needed to answer it without external files or tools.',
     'For output-prediction tasks, make the result deterministic. For debugging or refactoring tasks, include a real issue or a clear improvement target.',
     'Keep code snippets compact, normally no more than 30 lines.',
-    'Put code on separate lines without Markdown fences and preserve normal indentation because the prompt is displayed as plain text.',
+    'When the prompt contains code, wrap every complete snippet in a Markdown fenced code block using triple backticks and the correct lowercase language identifier, for example javascript, typescript, python, java, sql, html, css, bash, or json.',
+    'Put the opening fence, every code line, and the closing fence on separate lines. Preserve normal indentation and place a blank line before and after the fenced block.',
+    'Keep all explanatory prose outside code fences. Never place a multi-token code snippet inline in a prose paragraph.',
     'Do not reveal the solution, correct output, expected implementation, or leading hints in the question field.',
     'Return all natural-language fields in Russian.',
     'The question field, even when it contains a task, as well as rationale and expected_topics, must be written in Russian.',

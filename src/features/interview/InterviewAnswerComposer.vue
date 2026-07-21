@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  ref,
+  watch,
+  type ComponentPublicInstance,
+} from 'vue'
 
 import {
   getCodeAutocompleteResult,
@@ -56,6 +63,9 @@ const props = withDefaults(
 )
 
 const textEditors = new Map<string, HTMLTextAreaElement>()
+type TextEditorTemplateRef = Element | ComponentPublicInstance | null
+type TextEditorRefCallback = (element: TextEditorTemplateRef) => void
+const textEditorRefCallbacks = new Map<string, TextEditorRefCallback>()
 const lastSelection = ref<AnswerSelectionSnapshot | null>(null)
 const collapsedCodeBlockIds = ref<string[]>([])
 const contextMenu = ref<ContextMenuState>({
@@ -200,21 +210,61 @@ const currentSerializedValue = computed(() =>
 )
 
 const syncTextEditorHeight = (editor: HTMLTextAreaElement): void => {
+  const scrollContainer = editor.closest<HTMLElement>('.app-shell__content')
+  const outerScrollTop = scrollContainer?.scrollTop ?? 0
+  const outerScrollLeft = scrollContainer?.scrollLeft ?? 0
+  const editorScrollTop = editor.scrollTop
+  const editorScrollLeft = editor.scrollLeft
+
   editor.style.height = '0px'
   const minimumHeight = editor.classList.contains('interview-answer-composer__editor--code')
     ? 192
     : 48
   editor.style.height = `${Math.max(editor.scrollHeight, minimumHeight)}px`
+
+  if (scrollContainer) {
+    scrollContainer.scrollTop = outerScrollTop
+    scrollContainer.scrollLeft = outerScrollLeft
+  }
+
+  editor.scrollTop = editorScrollTop
+  editor.scrollLeft = editorScrollLeft
 }
 
-const registerTextEditor = (blockId: string, element: Element | null): void => {
+const registerTextEditor = (
+  blockId: string,
+  element: TextEditorTemplateRef,
+): void => {
   if (element instanceof HTMLTextAreaElement) {
+    if (textEditors.get(blockId) === element) {
+      return
+    }
+
     textEditors.set(blockId, element)
     syncTextEditorHeight(element)
     return
   }
 
   textEditors.delete(blockId)
+}
+
+const getTextEditorRef = (blockId: string): TextEditorRefCallback => {
+  const existingCallback = textEditorRefCallbacks.get(blockId)
+
+  if (existingCallback) {
+    return existingCallback
+  }
+
+  const callback: TextEditorRefCallback = (element) => {
+    registerTextEditor(blockId, element)
+
+    if (element === null) {
+      textEditorRefCallbacks.delete(blockId)
+    }
+  }
+
+  textEditorRefCallbacks.set(blockId, callback)
+  return callback
 }
 
 const closeContextMenu = (): void => {
@@ -293,6 +343,16 @@ const rememberSelection = (blockId: string, event: Event): void => {
     return
   }
 
+  lastSelection.value = createSelectionSnapshot(blockId, target)
+}
+
+const handleEditorInput = (blockId: string, event: Event): void => {
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return
+  }
+
   syncTextEditorHeight(target)
   lastSelection.value = createSelectionSnapshot(blockId, target)
 }
@@ -310,7 +370,7 @@ const focusBlock = async (
   }
 
   syncTextEditorHeight(editor)
-  editor.focus()
+  editor.focus({ preventScroll: true })
   const nextCaret = Math.max(0, Math.min(caretPosition, editor.value.length))
   editor.setSelectionRange(nextCaret, nextCaret)
   lastSelection.value = {
@@ -334,7 +394,7 @@ const focusBlockSelection = async (
   }
 
   syncTextEditorHeight(editor)
-  editor.focus()
+  editor.focus({ preventScroll: true })
   const nextStart = Math.max(0, Math.min(selectionStart, editor.value.length))
   const nextEnd = Math.max(nextStart, Math.min(selectionEnd, editor.value.length))
   editor.setSelectionRange(nextStart, nextEnd)
@@ -744,6 +804,7 @@ onBeforeUnmount(() => {
   closeContextMenu()
   cancelTouchContextMenu()
   textEditors.clear()
+  textEditorRefCallbacks.clear()
 })
 </script>
 
@@ -760,7 +821,7 @@ onBeforeUnmount(() => {
       <textarea
         v-if="block.type === 'text'"
         v-model="block.text"
-        :ref="(element) => registerTextEditor(block.id, element as Element | null)"
+        :ref="getTextEditorRef(block.id)"
         class="interview-answer-composer__editor"
         :disabled="disabled"
         rows="2"
@@ -769,7 +830,7 @@ onBeforeUnmount(() => {
         @click="rememberSelection(block.id, $event)"
         @keyup="rememberSelection(block.id, $event)"
         @select="rememberSelection(block.id, $event)"
-        @input="rememberSelection(block.id, $event)"
+        @input="handleEditorInput(block.id, $event)"
         @paste="void handlePaste($event, block.id)"
         @contextmenu="void openDesktopContextMenu($event, block.id)"
         @touchstart="handleTouchContextMenuStart($event, block.id)"
@@ -825,7 +886,7 @@ onBeforeUnmount(() => {
         <textarea
           v-if="!isCodeBlockCollapsed(block.id)"
           v-model="block.code"
-          :ref="(element) => registerTextEditor(block.id, element as Element | null)"
+          :ref="getTextEditorRef(block.id)"
           class="interview-answer-composer__editor interview-answer-composer__editor--code"
           :disabled="disabled"
           rows="8"
@@ -836,7 +897,7 @@ onBeforeUnmount(() => {
           @keyup="rememberSelection(block.id, $event)"
           @select="rememberSelection(block.id, $event)"
           @keydown="void handleCodeEditorKeydown(block.id, block.language, $event)"
-          @input="rememberSelection(block.id, $event)"
+          @input="handleEditorInput(block.id, $event)"
           @paste="void handlePaste($event, block.id)"
           @contextmenu="void openDesktopContextMenu($event, block.id)"
           @touchstart="handleTouchContextMenuStart($event, block.id)"

@@ -19,6 +19,7 @@ import type {
 } from '@/types'
 
 import type { InterviewModeOption, InterviewPracticeMode } from './types'
+import { toInterviewPromptSpeechText } from './interviewPrompt'
 
 type InterviewPracticeSection = 'full' | 'weak_spots' | 'quick'
 
@@ -691,7 +692,9 @@ export const useInterviewPractice = () => {
     stopAnswerListening()
     stopQuestionSpeech()
 
-    const utterance = new SpeechSynthesisUtterance(questionResponse.value.question.prompt)
+    const utterance = new SpeechSynthesisUtterance(
+      toInterviewPromptSpeechText(questionResponse.value.question.prompt),
+    )
     const availableVoices = window.speechSynthesis.getVoices()
     const preferredVoice =
       availableVoices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) ??

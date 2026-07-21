@@ -7,6 +7,7 @@ import {
   setContextualFooter,
 } from '@/features/navigation/contextualFooter'
 import InterviewAnswerComposer from '@/features/interview/InterviewAnswerComposer.vue'
+import InterviewPromptRenderer from '@/features/interview/InterviewPromptRenderer.vue'
 import InterviewResultPanel from '@/features/interview/InterviewResultPanel.vue'
 import InterviewWeakSpotsPanel from '@/features/interview/InterviewWeakSpotsPanel.vue'
 import { useInterviewPractice } from '@/features/interview/useInterviewPractice'
@@ -324,7 +325,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <p class="interview-page__question">{{ questionResponse.question.prompt }}</p>
+        <InterviewPromptRenderer :prompt="questionResponse.question.prompt" />
 
         <p
           v-if="questionProvider?.modelName"
@@ -479,8 +480,7 @@ onBeforeUnmount(() => {
     background-color 0.18s ease;
 }
 
-.interview-page__section-title,
-.interview-page__question {
+.interview-page__section-title {
   margin: 0;
   color: var(--text);
 }
@@ -565,14 +565,6 @@ onBeforeUnmount(() => {
 .interview-page__select:focus {
   border-color: rgba(149, 90, 48, 0.48);
   box-shadow: 0 0 0 3px rgba(149, 90, 48, 0.12);
-}
-
-.interview-page__question {
-  font-size: 1.04rem;
-  font-weight: 700;
-  line-height: 1.42;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .interview-page__provider-badge {
@@ -700,10 +692,6 @@ onBeforeUnmount(() => {
     gap: 0.9rem;
   }
 
-  .interview-page__question {
-    max-width: 64rem;
-    font-size: 1.16rem;
-  }
 }
 
 @media (min-width: 1480px) {

@@ -12,6 +12,7 @@ import {
   getInterviewResultStatus,
 } from '@/entities/interview'
 import InterviewEvaluationCard from '@/features/interview/InterviewEvaluationCard.vue'
+import InterviewPromptRenderer from '@/features/interview/InterviewPromptRenderer.vue'
 import SurfaceCard from '@/shared/ui/SurfaceCard.vue'
 import { useInterviewHistoryStore } from '@/stores/interviewHistory'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBase'
@@ -147,9 +148,9 @@ onMounted(async () => {
       </SurfaceCard>
 
       <SurfaceCard eyebrow="Задание" title="Что нужно было сделать">
-        <p class="history-detail-page__question">
-          {{ question?.prompt ?? 'Задание для этой попытки не найдено.' }}
-        </p>
+        <InterviewPromptRenderer
+          :prompt="question?.prompt ?? 'Задание для этой попытки не найдено.'"
+        />
       </SurfaceCard>
 
       <SurfaceCard eyebrow="Ответ" title="Что ты ответил">
@@ -243,7 +244,6 @@ onMounted(async () => {
 }
 
 .history-detail-page__state-copy,
-.history-detail-page__question,
 .history-detail-page__answer,
 .history-detail-page__improved-answer,
 .history-detail-page__verdict-copy {
@@ -307,14 +307,6 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: 0.76rem;
   font-weight: 700;
-}
-
-.history-detail-page__question {
-  color: var(--text);
-  font-size: 1rem;
-  font-weight: 700;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .history-detail-page__answer,

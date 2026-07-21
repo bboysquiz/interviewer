@@ -570,6 +570,7 @@ const generateInterviewQuestion = async (
               buildInterviewQuestionSystemPrompt(),
               'Return only one JSON object with keys question, rationale, expected_topics, difficulty, and source_indexes.',
               'The question key must contain the complete interview prompt, whether it is a conceptual question or a practical task.',
+              'Markdown code fences belong inside the question string. Keep the outer response valid JSON and never wrap the JSON object itself in a Markdown fence.',
             ].join('\n\n'),
           },
           {
