@@ -48,6 +48,7 @@ export interface InterviewQuestionSource {
   attachmentStoragePath: string | null
   attachmentOriginalFileName: string | null
   lastQuestionedAt: string | null
+  questionUseCount: number
 }
 
 export interface GenerateInterviewQuestionInput {
@@ -57,6 +58,7 @@ export interface GenerateInterviewQuestionInput {
   title?: string | null
   focusPrompt?: string | null
   previousQuestions?: string[]
+  excludedFoundationKeys?: string[]
 }
 
 export interface GenerateInterviewQuestionResponse {

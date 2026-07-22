@@ -23,6 +23,7 @@ export interface QuestionRow {
   category_id: string | null
   note_ids_json: string
   prompt: string
+  grounding_context: string | null
   model: string
   status: string
   asked_at: string

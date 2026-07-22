@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS interview_questions (
   category_id TEXT,
   note_ids_json TEXT NOT NULL DEFAULT '[]',
   prompt TEXT NOT NULL,
+  grounding_context TEXT,
   model TEXT NOT NULL,
   status TEXT NOT NULL,
   asked_at TEXT NOT NULL,

@@ -45,6 +45,7 @@ import {
   type SessionRow,
 } from '../services/interviewRecords.js'
 import { createInterviewRepository } from '../services/interviewRepository.js'
+import { selectInterviewQuestionKind } from '../services/interviewQuestionStrategy.js'
 
 const isInterviewSourceType = (
   value: string,
@@ -220,6 +221,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         questionNoteIds.length ? questionNoteIds : sessionNoteIds,
       ),
       prompt: questionPrompt,
+      grounding_context: null,
       model: coerceNullableString(questionInput.model) ?? 'manual-entry',
       status: coerceNullableString(questionInput.status) ?? 'evaluated',
       asked_at: coerceNullableString(questionInput.askedAt) ?? sessionStartedAt,
@@ -338,6 +340,9 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
     const title = coerceNullableString(body.title)
     const focusPrompt = coerceNullableString(body.focusPrompt)
     const previousQuestions = coerceStringArray(body.previousQuestions)
+    const excludedFoundationKeys = new Set(
+      coerceStringArray(body.excludedFoundationKeys),
+    )
 
     if (!sourceType) {
       response.status(400).json({
@@ -362,20 +367,49 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
       const annotatedSources = applyFoundationUsageToSources(
         context.sources,
         new Map(
-          [...foundationUsageMap.values()].map((row) => [
-            row.foundation_key,
+          [...foundationUsageMap.entries()].map(([foundationKey, row]) => [
+            foundationKey,
             {
-              foundationKey: row.foundation_key,
+              foundationKey,
               lastUsedAt: row.last_used_at,
               useCount: row.use_count,
             },
           ]),
         ),
       )
-      const generationSources = selectQuestionGenerationSources(annotatedSources)
-      const sourcePool = generationSources.length > 0 ? generationSources : annotatedSources
+      const eligibleSources = annotatedSources.filter(
+        (source) => source.sourceType !== 'note_title',
+      )
+      const uncoveredSources = eligibleSources.filter(
+        (source) => !excludedFoundationKeys.has(source.foundationKey),
+      )
+
+      if (
+        excludedFoundationKeys.size > 0 &&
+        eligibleSources.length > 0 &&
+        uncoveredSources.length === 0
+      ) {
+        throw new AiServiceError(
+          'All knowledge fragments for this interview have already been covered.',
+          {
+            status: 409,
+            code: 'ai_validation_error',
+          },
+        )
+      }
+
+      const selectionCandidates = uncoveredSources
+      const generationSources =
+        selectQuestionGenerationSources(selectionCandidates)
+      const sourcePool =
+        generationSources.length > 0
+          ? generationSources
+          : annotatedSources.slice(0, 4)
+      const selectedNoteTitles = uniqueNonEmpty(
+        sourcePool.map((source) => source.noteTitle),
+      )
       const totalFoundationCount = uniqueNonEmpty(
-        context.sources.map((source) => source.foundationKey),
+        eligibleSources.map((source) => source.foundationKey),
       ).length
       const scopedPreviousQuestions = uniqueNonEmpty([
         ...collectScopedPreviousQuestions(
@@ -387,11 +421,12 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         ),
         ...previousQuestions,
       ]).slice(0, 20)
+      const questionKind = selectInterviewQuestionKind(scopedPreviousQuestions)
       const generated = await generateInterviewQuestion({
         sourceType: context.sourceType,
         sessionTitle: context.title,
         categoryName: context.categoryName,
-        noteTitles: context.noteTitles,
+        noteTitles: selectedNoteTitles,
         knowledgeBaseContext: buildKnowledgeBaseContextFromSources(
           context,
           sourcePool,
@@ -400,6 +435,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
           (source) =>
             `${source.noteTitle} - ${source.sourceLabel}: ${source.excerpt}`,
         ),
+        questionKind,
         focusPrompt,
         previousQuestions: scopedPreviousQuestions,
       })
@@ -411,6 +447,10 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         groundedSources.length > 0
           ? groundedSources
           : selectRelevantInterviewSources(sourcePool, generated.question)
+      const groundingContext = buildKnowledgeBaseContextFromSources(
+        context,
+        relevantSources.length > 0 ? relevantSources : sourcePool,
+      )
       const sessionId = createId()
       const questionId = createId()
       const timestamp = nowIso()
@@ -438,6 +478,7 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         category_id: context.categoryId,
         note_ids_json: repository.toNoteIdsJson(context.noteIds),
         prompt: generated.question,
+        grounding_context: groundingContext,
         model: generated.model,
         status: 'pending',
         asked_at: timestamp,
@@ -587,33 +628,40 @@ export const createInterviewRouter = (db: SqliteDatabase): Router => {
         uniqueNonEmpty(context.sources.map((source) => source.foundationKey)),
       )
       const totalFoundationCount = uniqueNonEmpty(
-        context.sources.map((source) => source.foundationKey),
+        context.sources
+          .filter((source) => source.sourceType !== 'note_title')
+          .map((source) => source.foundationKey),
       ).length
       const annotatedSources = applyFoundationUsageToSources(
         context.sources,
         new Map(
-          [...foundationUsageMap.values()].map((row) => [
-            row.foundation_key,
+          [...foundationUsageMap.entries()].map(([foundationKey, row]) => [
+            foundationKey,
             {
-              foundationKey: row.foundation_key,
+              foundationKey,
               lastUsedAt: row.last_used_at,
               useCount: row.use_count,
             },
           ]),
         ),
       )
+      const relevantSources = selectRelevantInterviewSources(
+        annotatedSources,
+        questionRow.prompt,
+      )
+      const relevantNoteTitles = uniqueNonEmpty(
+        relevantSources.map((source) => source.noteTitle),
+      )
       const evaluated = await evaluateInterviewAnswer({
         sessionTitle: context.title,
         questionPrompt: questionRow.prompt,
         answerText,
         categoryName: context.categoryName,
-        noteTitles: context.noteTitles,
-        knowledgeBaseContext: context.contextText,
+        noteTitles: relevantNoteTitles,
+        knowledgeBaseContext:
+          questionRow.grounding_context?.trim() ||
+          buildKnowledgeBaseContextFromSources(context, relevantSources),
       })
-      const relevantSources = selectRelevantInterviewSources(
-        annotatedSources,
-        questionRow.prompt,
-      )
       const evaluatedAt = nowIso()
       const evaluationId = createId()
 

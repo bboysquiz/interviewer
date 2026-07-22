@@ -26,6 +26,7 @@ export interface AnalyzeImageForKnowledgeBaseResult extends AiExecutionDto {
 }
 
 export type InterviewQuestionDifficulty = 'easy' | 'medium' | 'hard'
+export type InterviewQuestionKind = 'conceptual' | 'code_task'
 
 export interface GenerateInterviewQuestionInput {
   sourceType: AiInterviewSourceType
@@ -34,6 +35,7 @@ export interface GenerateInterviewQuestionInput {
   noteTitles: string[]
   knowledgeBaseContext: string
   groundingSources: string[]
+  questionKind: InterviewQuestionKind
   focusPrompt?: string | null
   previousQuestions: string[]
 }
@@ -121,6 +123,7 @@ export interface GenerateInterviewQuestionRequestDto {
   title?: string | null
   focusPrompt?: string | null
   previousQuestions?: string[]
+  excludedFoundationKeys?: string[]
 }
 
 export interface EvaluateInterviewAnswerRequestDto {

@@ -267,6 +267,7 @@ const runPreSchemaMigrations = (db: SqliteDatabase): void => {
 
     if (tableExists(db, 'interview_questions')) {
       ensureColumn(db, 'interview_questions', 'user_id', 'TEXT')
+      ensureColumn(db, 'interview_questions', 'grounding_context', 'TEXT')
     }
 
     if (tableExists(db, 'interview_answer_evaluations')) {
@@ -302,6 +303,7 @@ const runPreSchemaMigrations = (db: SqliteDatabase): void => {
 
   if (tableExists(db, 'interview_questions')) {
     ensureColumn(db, 'interview_questions', 'user_id', 'TEXT')
+    ensureColumn(db, 'interview_questions', 'grounding_context', 'TEXT')
   }
 
   if (tableExists(db, 'interview_answer_evaluations')) {

@@ -569,12 +569,15 @@ export const useInterviewPractice = () => {
       ),
     ),
   )
-  const fullInterviewCoveredFoundationCount = computed(() =>
+  const fullInterviewCoveredFoundationKeys = computed(() =>
     uniqueNonEmpty(
       fullInterviewEntries.value.flatMap((entry) =>
         entry.question.context.sources.map((source) => source.foundationKey),
       ),
-    ).length,
+    ),
+  )
+  const fullInterviewCoveredFoundationCount = computed(
+    () => fullInterviewCoveredFoundationKeys.value.length,
   )
   const fullInterviewProgressPercent = computed(() => {
     const total = fullInterviewTotalFoundationCount.value
@@ -938,7 +941,7 @@ export const useInterviewPractice = () => {
         sourceType: 'category',
         categoryId: selectedCategoryId.value,
         title: selectedCategory.value
-          ? `Практика: ${selectedCategory.value.name}`
+          ? `Собеседование: ${selectedCategory.value.name}`
           : null,
       }
     }
@@ -1022,6 +1025,7 @@ export const useInterviewPractice = () => {
     const response = await requestQuestion({
       ...session.input,
       previousQuestions,
+      excludedFoundationKeys: fullInterviewCoveredFoundationKeys.value,
     })
 
     if (!response) {

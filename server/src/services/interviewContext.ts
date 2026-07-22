@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { SqliteDatabase } from '../db.js'
 import { AI_INTERVIEW_CONTEXT_MAX_CHARS } from '../config.js'
 import { parseStringArray } from '../lib/json.js'
@@ -86,6 +88,7 @@ export interface InterviewKnowledgeSource {
   attachmentStoragePath: string | null
   attachmentOriginalFileName: string | null
   lastQuestionedAt: string | null
+  questionUseCount: number
 }
 
 export interface InterviewFoundationUsageRecord {
@@ -167,8 +170,22 @@ const splitFragmentContent = (
     source,
     content: chunk.content,
     attachment_id: attachmentId,
-    foundation_key: attachmentId ? foundationKey : `${foundationKey}:${chunk.chunkIndex}`,
+    foundation_key: `${foundationKey}:${source}:${chunk.chunkIndex}`,
   }))
+
+const buildStableContentFoundationKey = (
+  noteId: string,
+  blockIndex: number,
+  type: 'text' | 'code',
+  content: string,
+): string => {
+  const digest = createHash('sha256')
+    .update(`${blockIndex}\u0000${content}`)
+    .digest('hex')
+    .slice(0, 20)
+
+  return `${type}:${noteId}:${digest}`
+}
 
 const buildScreenshotFragments = (
   note: NoteRow,
@@ -247,7 +264,7 @@ const buildNoteFragments = (
     },
   ]
 
-  for (const block of contentBlocks) {
+  for (const [blockIndex, block] of contentBlocks.entries()) {
     if (block.type === 'text') {
       fragments.push(
         ...splitFragmentContent(
@@ -256,21 +273,32 @@ const buildNoteFragments = (
           note.title,
           'note_content',
           block.text,
-          `text:${note.id}:${block.id}`,
+          buildStableContentFoundationKey(
+            note.id,
+            blockIndex,
+            'text',
+            block.text,
+          ),
         ),
       )
       continue
     }
 
     if (block.type === 'code') {
+      const codeContent = `\`\`\`${block.language}\n${block.code}\n\`\`\``
       fragments.push(
         ...splitFragmentContent(
           note.id,
           note.category_id,
           note.title,
           'note_content',
-          `\`\`\`${block.language}\n${block.code}\n\`\`\``,
-          `code:${note.id}:${block.id}`,
+          codeContent,
+          buildStableContentFoundationKey(
+            note.id,
+            blockIndex,
+            'code',
+            codeContent,
+          ),
         ),
       )
       continue
@@ -379,6 +407,7 @@ const buildKnowledgeSources = (
       attachmentStoragePath: attachment?.storage_path ?? null,
       attachmentOriginalFileName: attachment?.original_file_name ?? null,
       lastQuestionedAt: null,
+      questionUseCount: 0,
     })
   }
 
@@ -415,6 +444,7 @@ export const selectRelevantInterviewSources = (
 
       return {
         source,
+        overlap,
         score:
           overlap * 10 +
           sourceTypePriority[source.sourceType] +
@@ -424,7 +454,7 @@ export const selectRelevantInterviewSources = (
     .sort((left, right) => right.score - left.score)
 
   const relevantSources = scoredSources
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.overlap > 0)
     .map((entry) => entry.source)
 
   if (relevantSources.length > 0) {
@@ -448,10 +478,7 @@ export const pickInterviewSourcesByIndexes = (
     sourceIndexes
       .map((index) => sources[index - 1] ?? null)
       .filter((source): source is InterviewKnowledgeSource => source !== null)
-      .map((source) => [
-        `${source.noteId}:${source.sourceType}:${source.attachmentId ?? source.excerpt}`,
-        source,
-      ]),
+      .map((source) => [source.foundationKey, source]),
   ).values()]
 }
 
@@ -465,14 +492,19 @@ export const applyFoundationUsageToSources = (
     return {
       ...source,
       lastQuestionedAt: usageRecord?.lastUsedAt ?? null,
+      questionUseCount: usageRecord?.useCount ?? 0,
     }
   })
 
 const getFoundationRecencyWeight = (
   lastQuestionedAt: string | null,
+  useCount: number,
+  now: number,
 ): number => {
+  const usageWeight = 1 / Math.sqrt(1 + Math.max(0, useCount))
+
   if (!lastQuestionedAt) {
-    return 1.25
+    return 1.25 * usageWeight
   }
 
   const parsedTimestamp = Date.parse(lastQuestionedAt)
@@ -483,19 +515,20 @@ const getFoundationRecencyWeight = (
 
   const hoursSinceLastQuestion = Math.max(
     0,
-    (Date.now() - parsedTimestamp) / (1000 * 60 * 60),
+    (now - parsedTimestamp) / (1000 * 60 * 60),
   )
 
-  return Math.min(1.2, 0.18 + hoursSinceLastQuestion / 36)
+  return Math.min(1.2, 0.18 + hoursSinceLastQuestion / 36) * usageWeight
 }
 
 const shuffleSources = (
   sources: InterviewKnowledgeSource[],
+  random: () => number,
 ): InterviewKnowledgeSource[] => {
   const nextSources = [...sources]
 
   for (let index = nextSources.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const swapIndex = Math.floor(random() * (index + 1))
     const currentValue = nextSources[index]!
     nextSources[index] = nextSources[swapIndex]!
     nextSources[swapIndex] = currentValue
@@ -507,16 +540,28 @@ const shuffleSources = (
 interface FoundationSourceGroup {
   foundationKey: string
   lastQuestionedAt: string | null
+  questionUseCount: number
   sources: InterviewKnowledgeSource[]
+}
+
+interface QuestionGenerationSelectionOptions {
+  random?: () => number
+  now?: () => number
 }
 
 export const selectQuestionGenerationSources = (
   sources: InterviewKnowledgeSource[],
+  options: QuestionGenerationSelectionOptions = {},
 ): InterviewKnowledgeSource[] => {
-  const candidateSources = sources.filter((source) => source.sourceType !== 'note_title')
+  const random = options.random ?? Math.random
+  const now = options.now ?? Date.now
+  const nowTimestamp = now()
+  const candidateSources = sources.filter(
+    (source) => source.sourceType !== 'note_title',
+  )
 
   if (candidateSources.length <= 4) {
-    return shuffleSources(candidateSources)
+    return shuffleSources(candidateSources, random)
   }
 
   const sourceGroups = [...candidateSources.reduce((map, source) => {
@@ -530,6 +575,7 @@ export const selectQuestionGenerationSources = (
     map.set(source.foundationKey, {
       foundationKey: source.foundationKey,
       lastQuestionedAt: source.lastQuestionedAt,
+      questionUseCount: source.questionUseCount,
       sources: [source],
     })
     return map
@@ -541,22 +587,30 @@ export const selectQuestionGenerationSources = (
 
   while (availableGroups.length > 0 && selectedGroups.length < targetGroupCount) {
     const totalWeight = availableGroups.reduce(
-      (sum, group) => sum + getFoundationRecencyWeight(group.lastQuestionedAt),
+      (sum, group) =>
+        sum +
+        getFoundationRecencyWeight(
+          group.lastQuestionedAt,
+          group.questionUseCount,
+          nowTimestamp,
+        ),
       0,
     )
 
     if (totalWeight <= 0) {
-      const randomIndex = Math.floor(Math.random() * availableGroups.length)
+      const randomIndex = Math.floor(random() * availableGroups.length)
       selectedGroups.push(availableGroups.splice(randomIndex, 1)[0]!)
       continue
     }
 
-    let threshold = Math.random() * totalWeight
+    let threshold = random() * totalWeight
     let selectedIndex = 0
 
     for (let index = 0; index < availableGroups.length; index += 1) {
       threshold -= getFoundationRecencyWeight(
         availableGroups[index]!.lastQuestionedAt,
+        availableGroups[index]!.questionUseCount,
+        nowTimestamp,
       )
 
       if (threshold <= 0) {
@@ -569,7 +623,10 @@ export const selectQuestionGenerationSources = (
   }
 
   return shuffleSources(
-    selectedGroups.flatMap((group) => group.sources),
+    selectedGroups
+      .map((group) => shuffleSources(group.sources, random)[0] ?? null)
+      .filter((source): source is InterviewKnowledgeSource => source !== null),
+    random,
   )
 }
 
@@ -577,12 +634,15 @@ export const buildKnowledgeBaseContextFromSources = (
   context: InterviewKnowledgeBaseContext,
   sources: InterviewKnowledgeSource[],
 ): string => {
+  const selectedNoteTitles = uniqueNonEmpty(
+    sources.map((source) => source.noteTitle),
+  )
   const header = [
     `Session title: ${context.title}`,
     `Source type: ${context.sourceType}`,
     context.categoryName ? `Category: ${context.categoryName}` : null,
-    context.noteTitles.length > 0
-      ? `Notes: ${context.noteTitles.join(', ')}`
+    selectedNoteTitles.length > 0
+      ? `Notes: ${selectedNoteTitles.join(', ')}`
       : null,
   ]
     .filter(Boolean)
@@ -627,7 +687,6 @@ export const resolveInterviewKnowledgeBaseContext = (
       WHERE n.user_id = ?
         AND n.category_id = ?
       ORDER BY n.updated_at DESC, n.created_at DESC
-      LIMIT 24
     `,
   )
 
@@ -779,10 +838,7 @@ export const resolveInterviewKnowledgeBaseContext = (
     notes,
     fragments,
   )
-  const sources = buildKnowledgeSources(
-    contextPayload.usedFragments,
-    attachmentsById,
-  )
+  const sources = buildKnowledgeSources(fragments, attachmentsById)
 
   return {
     sourceType: input.sourceType,
@@ -792,7 +848,7 @@ export const resolveInterviewKnowledgeBaseContext = (
     noteIds: notes.map((note) => note.id),
     noteTitles: notes.map((note) => note.title),
     noteCount: notes.length,
-    chunkCount: contextPayload.usedFragments.length,
+    chunkCount: fragments.length,
     contextText: contextPayload.contextText,
     sources,
   }

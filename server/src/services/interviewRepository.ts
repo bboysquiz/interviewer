@@ -82,6 +82,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         category_id,
         note_ids_json,
         prompt,
+        grounding_context,
         model,
         status,
         asked_at,
@@ -102,6 +103,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         category_id,
         note_ids_json,
         prompt,
+        grounding_context,
         model,
         status,
         asked_at,
@@ -171,12 +173,13 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         category_id,
         note_ids_json,
         prompt,
+        grounding_context,
         model,
         status,
         asked_at,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   )
   const insertEvaluationStatement = db.prepare(
@@ -309,6 +312,7 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
       questionRow.category_id,
       questionRow.note_ids_json,
       questionRow.prompt,
+      questionRow.grounding_context,
       questionRow.model,
       questionRow.status,
       questionRow.asked_at,
@@ -374,33 +378,53 @@ export const createInterviewRepository = (db: SqliteDatabase) => {
         return new Map<string, FoundationUsageRow>()
       }
 
-      const placeholders = foundationKeys.map(() => '?').join(', ')
-      const scopedFoundationKeys = foundationKeys.map(
-        (foundationKey) => `${userId}::${foundationKey}`,
-      )
-      const statement = db.prepare(
-        `
-          SELECT
-            foundation_key,
-            user_id,
-            category_id,
-            note_id,
-            attachment_id,
-            source_type,
-            source_excerpt,
-            use_count,
-            first_used_at,
-            last_used_at,
-            created_at,
-            updated_at
-          FROM interview_foundation_usage
-          WHERE foundation_key IN (${placeholders})
-        `,
-      )
+      const keyPrefix = `${userId}::`
+      const scopedFoundationKeys = [
+        ...new Set(
+          foundationKeys.map((foundationKey) => `${keyPrefix}${foundationKey}`),
+        ),
+      ]
+      const usageRows: FoundationUsageRow[] = []
+      const batchSize = 500
+
+      for (
+        let startIndex = 0;
+        startIndex < scopedFoundationKeys.length;
+        startIndex += batchSize
+      ) {
+        const batch = scopedFoundationKeys.slice(
+          startIndex,
+          startIndex + batchSize,
+        )
+        const placeholders = batch.map(() => '?').join(', ')
+        const statement = db.prepare(
+          `
+            SELECT
+              foundation_key,
+              user_id,
+              category_id,
+              note_id,
+              attachment_id,
+              source_type,
+              source_excerpt,
+              use_count,
+              first_used_at,
+              last_used_at,
+              created_at,
+              updated_at
+            FROM interview_foundation_usage
+            WHERE foundation_key IN (${placeholders})
+          `,
+        )
+
+        usageRows.push(...(statement.all(...batch) as FoundationUsageRow[]))
+      }
 
       return new Map(
-        (statement.all(...scopedFoundationKeys) as FoundationUsageRow[]).map((row) => [
-          row.foundation_key.replace(`${userId}::`, ''),
+        usageRows.map((row) => [
+          row.foundation_key.startsWith(keyPrefix)
+            ? row.foundation_key.slice(keyPrefix.length)
+            : row.foundation_key,
           row,
         ]),
       )
