@@ -56,6 +56,11 @@ interface EditorIndentResult {
 }
 
 const TAB_INDENT = '    '
+const OPENING_BRACKET_PAIRS: Record<string, string> = {
+  '(': ')',
+  '[': ']',
+  '{': '}',
+}
 
 const model = defineModel<string>({ required: true })
 
@@ -566,12 +571,7 @@ const handleEditorKeydown = async (
   blockId: string,
   event: KeyboardEvent,
 ): Promise<boolean> => {
-  if (
-    event.key !== 'Tab' ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.altKey
-  ) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
     return false
   }
 
@@ -581,20 +581,51 @@ const handleEditorKeydown = async (
     return false
   }
 
+  if (event.key === 'Tab') {
+    event.preventDefault()
+
+    const result = getTabIndentResult(
+      target.value,
+      target.selectionStart ?? 0,
+      target.selectionEnd ?? target.selectionStart ?? 0,
+      event.shiftKey,
+    )
+
+    await applyEditorValue(
+      blockId,
+      result.value,
+      result.selectionStart,
+      result.selectionEnd,
+    )
+
+    return true
+  }
+
+  const closingBracket = OPENING_BRACKET_PAIRS[event.key]
+
+  if (!closingBracket) {
+    return false
+  }
+
   event.preventDefault()
 
-  const result = getTabIndentResult(
-    target.value,
-    target.selectionStart ?? 0,
-    target.selectionEnd ?? target.selectionStart ?? 0,
-    event.shiftKey,
+  const safeStart = Math.max(
+    0,
+    Math.min(target.selectionStart ?? 0, target.value.length),
   )
+  const safeEnd = Math.max(
+    safeStart,
+    Math.min(target.selectionEnd ?? safeStart, target.value.length),
+  )
+  const selectedText = target.value.slice(safeStart, safeEnd)
+  const nextSelectionStart = safeStart + event.key.length
+  const nextSelectionEnd = nextSelectionStart + selectedText.length
 
   await applyEditorValue(
     blockId,
-    result.value,
-    result.selectionStart,
-    result.selectionEnd,
+    `${target.value.slice(0, safeStart)}${event.key}${selectedText}${closingBracket}${target.value.slice(safeEnd)}`,
+    nextSelectionStart,
+    nextSelectionEnd,
   )
 
   return true
