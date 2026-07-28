@@ -55,7 +55,7 @@ interface EditorIndentResult {
   selectionEnd: number
 }
 
-const TAB_INDENT = '\t'
+const TAB_INDENT = '    '
 
 const model = defineModel<string>({ required: true })
 
