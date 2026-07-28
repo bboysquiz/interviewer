@@ -61,6 +61,13 @@ const OPENING_BRACKET_PAIRS: Record<string, string> = {
   '[': ']',
   '{': '}',
 }
+const TEXT_EDITOR_OPENING_PAIRS: Record<string, string> = {
+  ...OPENING_BRACKET_PAIRS,
+  '<': '>',
+  "'": "'",
+  '"': '"',
+  '`': '`',
+}
 
 const model = defineModel<string>({ required: true })
 
@@ -601,7 +608,10 @@ const handleEditorKeydown = async (
     return true
   }
 
-  const closingBracket = OPENING_BRACKET_PAIRS[event.key]
+  const block = blocks.value[findBlockIndexById(blockId)]
+  const openingPairs =
+    block?.type === 'text' ? TEXT_EDITOR_OPENING_PAIRS : OPENING_BRACKET_PAIRS
+  const closingBracket = openingPairs[event.key]
 
   if (!closingBracket) {
     return false
