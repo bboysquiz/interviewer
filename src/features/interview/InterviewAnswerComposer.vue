@@ -3,6 +3,7 @@ import {
   computed,
   nextTick,
   onBeforeUnmount,
+  onMounted,
   ref,
   watch,
   type ComponentPublicInstance,
@@ -55,6 +56,21 @@ interface EditorIndentResult {
   selectionEnd: number
 }
 
+interface SelectionHighlight {
+  blockId: string
+  text: string
+}
+
+interface HighlightSegment {
+  text: string
+  highlighted: boolean
+}
+
+interface EditorScrollOffset {
+  top: number
+  left: number
+}
+
 const TAB_INDENT = '    '
 const OPENING_BRACKET_PAIRS: Record<string, string> = {
   '(': ')',
@@ -87,6 +103,8 @@ type TextEditorTemplateRef = Element | ComponentPublicInstance | null
 type TextEditorRefCallback = (element: TextEditorTemplateRef) => void
 const textEditorRefCallbacks = new Map<string, TextEditorRefCallback>()
 const lastSelection = ref<AnswerSelectionSnapshot | null>(null)
+const activeSelectionHighlight = ref<SelectionHighlight | null>(null)
+const editorScrollOffsets = ref<Record<string, EditorScrollOffset>>({})
 const collapsedCodeBlockIds = ref<string[]>([])
 const contextMenu = ref<ContextMenuState>({
   open: false,
@@ -229,7 +247,102 @@ const currentSerializedValue = computed(() =>
   serializeTextAndCodeBlocksToPlainText(blocks.value),
 )
 
-const syncTextEditorHeight = (editor: HTMLTextAreaElement): void => {
+const setEditorScrollOffset = (
+  blockId: string,
+  editor: HTMLTextAreaElement,
+): void => {
+  const previousOffset = editorScrollOffsets.value[blockId]
+  const nextOffset = {
+    top: editor.scrollTop,
+    left: editor.scrollLeft,
+  }
+
+  if (
+    previousOffset?.top === nextOffset.top &&
+    previousOffset.left === nextOffset.left
+  ) {
+    return
+  }
+
+  editorScrollOffsets.value = {
+    ...editorScrollOffsets.value,
+    [blockId]: nextOffset,
+  }
+}
+
+const getHighlightLayerStyle = (blockId: string): Record<string, string> => {
+  const offset = editorScrollOffsets.value[blockId] ?? { top: 0, left: 0 }
+
+  return {
+    transform: `translate(${-offset.left}px, ${-offset.top}px)`,
+  }
+}
+
+const getHighlightSegments = (
+  blockId: string,
+  value: string,
+): HighlightSegment[] => {
+  const highlight = activeSelectionHighlight.value
+
+  if (
+    !highlight ||
+    highlight.blockId !== blockId ||
+    !highlight.text.trim()
+  ) {
+    return [
+      {
+        text: value,
+        highlighted: false,
+      },
+    ]
+  }
+
+  const segments: HighlightSegment[] = []
+  const needle = highlight.text
+  let cursor = 0
+
+  while (cursor < value.length) {
+    const matchIndex = value.indexOf(needle, cursor)
+
+    if (matchIndex === -1) {
+      break
+    }
+
+    if (matchIndex > cursor) {
+      segments.push({
+        text: value.slice(cursor, matchIndex),
+        highlighted: false,
+      })
+    }
+
+    segments.push({
+      text: value.slice(matchIndex, matchIndex + needle.length),
+      highlighted: true,
+    })
+    cursor = matchIndex + needle.length
+  }
+
+  if (cursor < value.length) {
+    segments.push({
+      text: value.slice(cursor),
+      highlighted: false,
+    })
+  }
+
+  return segments.length
+    ? segments
+    : [
+        {
+          text: value,
+          highlighted: false,
+        },
+      ]
+}
+
+const syncTextEditorHeight = (
+  blockId: string,
+  editor: HTMLTextAreaElement,
+): void => {
   const scrollContainer = editor.closest<HTMLElement>('.app-shell__content')
   const outerScrollTop = scrollContainer?.scrollTop ?? 0
   const outerScrollLeft = scrollContainer?.scrollLeft ?? 0
@@ -249,6 +362,7 @@ const syncTextEditorHeight = (editor: HTMLTextAreaElement): void => {
 
   editor.scrollTop = editorScrollTop
   editor.scrollLeft = editorScrollLeft
+  setEditorScrollOffset(blockId, editor)
 }
 
 const registerTextEditor = (
@@ -261,7 +375,7 @@ const registerTextEditor = (
     }
 
     textEditors.set(blockId, element)
-    syncTextEditorHeight(element)
+    syncTextEditorHeight(blockId, element)
     return
   }
 
@@ -356,6 +470,42 @@ const createSelectionSnapshot = (
   selectionEnd: editor.selectionEnd ?? editor.value.length,
 })
 
+const updateSelectionHighlight = (
+  blockId: string,
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+): void => {
+  if (selectionEnd <= selectionStart) {
+    activeSelectionHighlight.value = null
+    return
+  }
+
+  const selectedText = value.slice(selectionStart, selectionEnd)
+
+  activeSelectionHighlight.value = selectedText.trim()
+    ? {
+        blockId,
+        text: selectedText,
+      }
+    : null
+}
+
+const updateSelectionStateFromEditor = (
+  blockId: string,
+  editor: HTMLTextAreaElement,
+): void => {
+  const selection = createSelectionSnapshot(blockId, editor)
+
+  lastSelection.value = selection
+  updateSelectionHighlight(
+    blockId,
+    editor.value,
+    selection.selectionStart,
+    selection.selectionEnd,
+  )
+}
+
 const rememberSelection = (blockId: string, event: Event): void => {
   const target = event.target
 
@@ -363,7 +513,7 @@ const rememberSelection = (blockId: string, event: Event): void => {
     return
   }
 
-  lastSelection.value = createSelectionSnapshot(blockId, target)
+  updateSelectionStateFromEditor(blockId, target)
 }
 
 const handleEditorInput = (blockId: string, event: Event): void => {
@@ -373,8 +523,18 @@ const handleEditorInput = (blockId: string, event: Event): void => {
     return
   }
 
-  syncTextEditorHeight(target)
-  lastSelection.value = createSelectionSnapshot(blockId, target)
+  syncTextEditorHeight(blockId, target)
+  updateSelectionStateFromEditor(blockId, target)
+}
+
+const handleEditorScroll = (blockId: string, event: Event): void => {
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return
+  }
+
+  setEditorScrollOffset(blockId, target)
 }
 
 const focusBlock = async (
@@ -389,7 +549,7 @@ const focusBlock = async (
     return
   }
 
-  syncTextEditorHeight(editor)
+  syncTextEditorHeight(blockId, editor)
   editor.focus({ preventScroll: true })
   const nextCaret = Math.max(0, Math.min(caretPosition, editor.value.length))
   editor.setSelectionRange(nextCaret, nextCaret)
@@ -398,6 +558,7 @@ const focusBlock = async (
     selectionStart: nextCaret,
     selectionEnd: nextCaret,
   }
+  activeSelectionHighlight.value = null
 }
 
 const focusBlockSelection = async (
@@ -413,7 +574,7 @@ const focusBlockSelection = async (
     return
   }
 
-  syncTextEditorHeight(editor)
+  syncTextEditorHeight(blockId, editor)
   editor.focus({ preventScroll: true })
   const nextStart = Math.max(0, Math.min(selectionStart, editor.value.length))
   const nextEnd = Math.max(nextStart, Math.min(selectionEnd, editor.value.length))
@@ -423,6 +584,7 @@ const focusBlockSelection = async (
     selectionStart: nextStart,
     selectionEnd: nextEnd,
   }
+  updateSelectionHighlight(blockId, editor.value, nextStart, nextEnd)
 }
 
 const insertTextIntoSelection = (
@@ -545,6 +707,14 @@ const getTabIndentResult = (
   }
 }
 
+const getCurrentLineIndent = (value: string, position: number): string => {
+  const safePosition = Math.max(0, Math.min(position, value.length))
+  const lineStart = value.lastIndexOf('\n', safePosition - 1) + 1
+  const lineBeforeCaret = value.slice(lineStart, safePosition)
+
+  return lineBeforeCaret.match(/^[\t ]*/u)?.[0] ?? ''
+}
+
 const applyEditorValue = async (
   blockId: string,
   value: string,
@@ -603,6 +773,30 @@ const handleEditorKeydown = async (
       result.value,
       result.selectionStart,
       result.selectionEnd,
+    )
+
+    return true
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+
+    const safeStart = Math.max(
+      0,
+      Math.min(target.selectionStart ?? 0, target.value.length),
+    )
+    const safeEnd = Math.max(
+      safeStart,
+      Math.min(target.selectionEnd ?? safeStart, target.value.length),
+    )
+    const indent = getCurrentLineIndent(target.value, safeStart)
+    const insertion = `\n${indent}`
+    const nextSelection = safeStart + insertion.length
+
+    await applyEditorValue(
+      blockId,
+      `${target.value.slice(0, safeStart)}${insertion}${target.value.slice(safeEnd)}`,
+      nextSelection,
     )
 
     return true
@@ -969,6 +1163,25 @@ const handleContextMenuAction = async (actionId: string): Promise<void> => {
   }
 }
 
+const syncSelectionFromActiveEditor = (): void => {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  const activeElement = document.activeElement
+
+  if (!(activeElement instanceof HTMLTextAreaElement)) {
+    return
+  }
+
+  for (const [blockId, editor] of textEditors.entries()) {
+    if (editor === activeElement) {
+      updateSelectionStateFromEditor(blockId, editor)
+      return
+    }
+  }
+}
+
 watch(
   currentSerializedValue,
   (value) => {
@@ -999,13 +1212,26 @@ watch(
     collapsedCodeBlockIds.value = collapsedCodeBlockIds.value.filter((id) =>
       activeIds.has(id),
     )
+
+    if (
+      activeSelectionHighlight.value &&
+      !activeIds.has(activeSelectionHighlight.value.blockId)
+    ) {
+      activeSelectionHighlight.value = null
+    }
   },
   { immediate: true },
 )
 
+onMounted(() => {
+  document.addEventListener('selectionchange', syncSelectionFromActiveEditor)
+})
+
 onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', syncSelectionFromActiveEditor)
   closeContextMenu()
   cancelTouchContextMenu()
+  activeSelectionHighlight.value = null
   textEditors.clear()
   textEditorRefCallbacks.clear()
 })
@@ -1021,27 +1247,49 @@ onBeforeUnmount(() => {
         'interview-answer-composer__segment--code': block.type === 'code',
       }"
     >
-      <textarea
+      <div
         v-if="block.type === 'text'"
-        v-model="block.text"
-        :ref="getTextEditorRef(block.id)"
-        class="interview-answer-composer__editor"
-        :disabled="disabled"
-        rows="2"
-        :placeholder="index === 0 ? placeholder : ''"
-        @focus="rememberSelection(block.id, $event)"
-        @click="rememberSelection(block.id, $event)"
-        @keyup="rememberSelection(block.id, $event)"
-        @select="rememberSelection(block.id, $event)"
-        @keydown="void handleEditorKeydown(block.id, $event)"
-        @input="handleEditorInput(block.id, $event)"
-        @paste="void handlePaste($event, block.id)"
-        @contextmenu="void openDesktopContextMenu($event, block.id)"
-        @touchstart="handleTouchContextMenuStart($event, block.id)"
-        @touchmove="cancelTouchContextMenu()"
-        @touchend="handleTouchContextMenuEnd($event)"
-        @touchcancel="cancelTouchContextMenu()"
-      />
+        class="interview-answer-composer__editor-shell"
+      >
+        <div
+          class="interview-answer-composer__highlight-layer"
+          :style="getHighlightLayerStyle(block.id)"
+          aria-hidden="true"
+        >
+          <template
+            v-for="(segment, segmentIndex) in getHighlightSegments(block.id, block.text)"
+            :key="`${block.id}-highlight-${segmentIndex}`"
+          >
+            <mark
+              v-if="segment.highlighted"
+              class="interview-answer-composer__highlight-match"
+            >{{ segment.text }}</mark>
+            <span v-else>{{ segment.text }}</span>
+          </template>
+        </div>
+
+        <textarea
+          v-model="block.text"
+          :ref="getTextEditorRef(block.id)"
+          class="interview-answer-composer__editor"
+          :disabled="disabled"
+          rows="2"
+          :placeholder="index === 0 ? placeholder : ''"
+          @focus="rememberSelection(block.id, $event)"
+          @click="rememberSelection(block.id, $event)"
+          @keyup="rememberSelection(block.id, $event)"
+          @select="rememberSelection(block.id, $event)"
+          @scroll="handleEditorScroll(block.id, $event)"
+          @keydown="void handleEditorKeydown(block.id, $event)"
+          @input="handleEditorInput(block.id, $event)"
+          @paste="void handlePaste($event, block.id)"
+          @contextmenu="void openDesktopContextMenu($event, block.id)"
+          @touchstart="handleTouchContextMenuStart($event, block.id)"
+          @touchmove="cancelTouchContextMenu()"
+          @touchend="handleTouchContextMenuEnd($event)"
+          @touchcancel="cancelTouchContextMenu()"
+        />
+      </div>
 
       <div
         v-else
@@ -1087,28 +1335,50 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <textarea
+        <div
           v-if="!isCodeBlockCollapsed(block.id)"
-          v-model="block.code"
-          :ref="getTextEditorRef(block.id)"
-          class="interview-answer-composer__editor interview-answer-composer__editor--code"
-          :disabled="disabled"
-          rows="8"
-          spellcheck="false"
-          placeholder="Напиши код здесь"
-          @focus="rememberSelection(block.id, $event)"
-          @click="rememberSelection(block.id, $event)"
-          @keyup="rememberSelection(block.id, $event)"
-          @select="rememberSelection(block.id, $event)"
-          @keydown="void handleCodeEditorKeydown(block.id, block.language, $event)"
-          @input="handleEditorInput(block.id, $event)"
-          @paste="void handlePaste($event, block.id)"
-          @contextmenu="void openDesktopContextMenu($event, block.id)"
-          @touchstart="handleTouchContextMenuStart($event, block.id)"
-          @touchmove="cancelTouchContextMenu()"
-          @touchend="handleTouchContextMenuEnd($event)"
-          @touchcancel="cancelTouchContextMenu()"
-        />
+          class="interview-answer-composer__editor-shell interview-answer-composer__editor-shell--code"
+        >
+          <div
+            class="interview-answer-composer__highlight-layer interview-answer-composer__highlight-layer--code"
+            :style="getHighlightLayerStyle(block.id)"
+            aria-hidden="true"
+          >
+            <template
+              v-for="(segment, segmentIndex) in getHighlightSegments(block.id, block.code)"
+              :key="`${block.id}-code-highlight-${segmentIndex}`"
+            >
+              <mark
+                v-if="segment.highlighted"
+                class="interview-answer-composer__highlight-match"
+              >{{ segment.text }}</mark>
+              <span v-else>{{ segment.text }}</span>
+            </template>
+          </div>
+
+          <textarea
+            v-model="block.code"
+            :ref="getTextEditorRef(block.id)"
+            class="interview-answer-composer__editor interview-answer-composer__editor--code"
+            :disabled="disabled"
+            rows="8"
+            spellcheck="false"
+            placeholder="Напиши код здесь"
+            @focus="rememberSelection(block.id, $event)"
+            @click="rememberSelection(block.id, $event)"
+            @keyup="rememberSelection(block.id, $event)"
+            @select="rememberSelection(block.id, $event)"
+            @scroll="handleEditorScroll(block.id, $event)"
+            @keydown="void handleCodeEditorKeydown(block.id, block.language, $event)"
+            @input="handleEditorInput(block.id, $event)"
+            @paste="void handlePaste($event, block.id)"
+            @contextmenu="void openDesktopContextMenu($event, block.id)"
+            @touchstart="handleTouchContextMenuStart($event, block.id)"
+            @touchmove="cancelTouchContextMenu()"
+            @touchend="handleTouchContextMenuEnd($event)"
+            @touchcancel="cancelTouchContextMenu()"
+          />
+        </div>
 
         <button
           v-else
@@ -1144,12 +1414,63 @@ onBeforeUnmount(() => {
   display: block;
 }
 
+.interview-answer-composer__editor-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.interview-answer-composer__editor-shell--code {
+  border-radius: 16px;
+  background: rgba(18, 19, 24, 0.92);
+}
+
+.interview-answer-composer__highlight-layer {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  min-height: 3rem;
+  padding: 1rem;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  color: transparent;
+  font: inherit;
+  line-height: 1.6;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  tab-size: 2;
+  white-space: pre-wrap;
+}
+
+.interview-answer-composer__highlight-layer--code {
+  min-height: 12rem;
+  font-family:
+    Consolas,
+    'SFMono-Regular',
+    'Cascadia Mono',
+    'Liberation Mono',
+    monospace;
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+
+.interview-answer-composer__highlight-match {
+  border-radius: 0.28rem;
+  background: rgba(232, 138, 69, 0.34);
+  box-shadow: 0 0 0 1px rgba(232, 138, 69, 0.14);
+  color: transparent;
+}
+
 .interview-answer-composer__editor {
+  position: relative;
+  z-index: 1;
   width: 100%;
   min-height: 3rem;
   border: 1px solid rgba(180, 154, 123, 0.24);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.74);
+  background: transparent;
   color: var(--text);
   padding: 1rem;
   font: inherit;
@@ -1209,7 +1530,7 @@ onBeforeUnmount(() => {
   min-height: 12rem;
   border-color: rgba(255, 255, 255, 0.08);
   border-radius: 16px;
-  background: rgba(18, 19, 24, 0.92);
+  background: transparent;
   color: #f4f1eb;
   font-family:
     Consolas,
