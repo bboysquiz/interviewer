@@ -49,6 +49,14 @@ interface TouchContextMenuState {
   instantEligible: boolean
 }
 
+interface EditorIndentResult {
+  value: string
+  selectionStart: number
+  selectionEnd: number
+}
+
+const TAB_INDENT = '\t'
+
 const model = defineModel<string>({ required: true })
 
 const props = withDefaults(
@@ -442,6 +450,156 @@ const insertTextIntoSelection = (
   }
 }
 
+const getTabIndentResult = (
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  shouldOutdent: boolean,
+): EditorIndentResult => {
+  const safeStart = Math.max(0, Math.min(selectionStart, value.length))
+  const safeEnd = Math.max(safeStart, Math.min(selectionEnd, value.length))
+
+  if (!shouldOutdent && safeStart === safeEnd) {
+    return {
+      value: `${value.slice(0, safeStart)}${TAB_INDENT}${value.slice(safeEnd)}`,
+      selectionStart: safeStart + TAB_INDENT.length,
+      selectionEnd: safeStart + TAB_INDENT.length,
+    }
+  }
+
+  const rangeStart = value.lastIndexOf('\n', safeStart - 1) + 1
+  const lineEndSearchFrom =
+    safeEnd > safeStart && value[safeEnd - 1] === '\n'
+      ? safeEnd - 1
+      : safeEnd
+  const nextLineBreak = value.indexOf('\n', lineEndSearchFrom)
+  const rangeEnd = nextLineBreak === -1 ? value.length : nextLineBreak
+  const rangeText = value.slice(rangeStart, rangeEnd)
+  const lines = rangeText.split('\n')
+  let lineStart = rangeStart
+  let deltaBeforeSelectionStart = 0
+  let totalDelta = 0
+
+  const nextLines = lines.map((line) => {
+    let nextLine = line
+    let delta = 0
+
+    if (shouldOutdent) {
+      const removeCount = line.startsWith(TAB_INDENT)
+        ? TAB_INDENT.length
+        : line.startsWith('  ')
+          ? 2
+          : line.startsWith(' ')
+            ? 1
+            : 0
+
+      if (removeCount > 0) {
+        nextLine = line.slice(removeCount)
+        delta = -removeCount
+      }
+    } else {
+      nextLine = `${TAB_INDENT}${line}`
+      delta = TAB_INDENT.length
+    }
+
+    if (lineStart < safeStart) {
+      deltaBeforeSelectionStart += delta
+    }
+
+    totalDelta += delta
+    lineStart += line.length + 1
+
+    return nextLine
+  })
+
+  const nextValue = [
+    value.slice(0, rangeStart),
+    nextLines.join('\n'),
+    value.slice(rangeEnd),
+  ].join('')
+  const nextSelectionStart = Math.max(
+    rangeStart,
+    safeStart + deltaBeforeSelectionStart,
+  )
+  const nextSelectionEnd =
+    safeStart === safeEnd
+      ? nextSelectionStart
+      : Math.max(nextSelectionStart, safeEnd + totalDelta)
+
+  return {
+    value: nextValue,
+    selectionStart: nextSelectionStart,
+    selectionEnd: nextSelectionEnd,
+  }
+}
+
+const applyEditorValue = async (
+  blockId: string,
+  value: string,
+  selectionStart: number,
+  selectionEnd = selectionStart,
+): Promise<void> => {
+  const blockIndex = findBlockIndexById(blockId)
+  const block = blocks.value[blockIndex]
+
+  if (!block) {
+    return
+  }
+
+  const nextBlocks = [...blocks.value]
+  nextBlocks[blockIndex] =
+    block.type === 'text'
+      ? {
+          ...block,
+          text: value,
+        }
+      : {
+          ...block,
+          code: value,
+        }
+
+  replaceBlocks(nextBlocks)
+  await focusBlockSelection(blockId, selectionStart, selectionEnd)
+}
+
+const handleEditorKeydown = async (
+  blockId: string,
+  event: KeyboardEvent,
+): Promise<boolean> => {
+  if (
+    event.key !== 'Tab' ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey
+  ) {
+    return false
+  }
+
+  const target = event.target
+
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return false
+  }
+
+  event.preventDefault()
+
+  const result = getTabIndentResult(
+    target.value,
+    target.selectionStart ?? 0,
+    target.selectionEnd ?? target.selectionStart ?? 0,
+    event.shiftKey,
+  )
+
+  await applyEditorValue(
+    blockId,
+    result.value,
+    result.selectionStart,
+    result.selectionEnd,
+  )
+
+  return true
+}
+
 const insertCodeBlockAtSelection = (
   selection: AnswerSelectionSnapshot,
 ): { blockId: string; caretPosition: number } | null => {
@@ -554,6 +712,10 @@ const handleCodeEditorKeydown = async (
   language: CodeBlockLanguage,
   event: KeyboardEvent,
 ): Promise<void> => {
+  if (await handleEditorKeydown(blockId, event)) {
+    return
+  }
+
   const target = event.target
 
   if (!(target instanceof HTMLTextAreaElement)) {
@@ -830,6 +992,7 @@ onBeforeUnmount(() => {
         @click="rememberSelection(block.id, $event)"
         @keyup="rememberSelection(block.id, $event)"
         @select="rememberSelection(block.id, $event)"
+        @keydown="void handleEditorKeydown(block.id, $event)"
         @input="handleEditorInput(block.id, $event)"
         @paste="void handlePaste($event, block.id)"
         @contextmenu="void openDesktopContextMenu($event, block.id)"
@@ -950,6 +1113,7 @@ onBeforeUnmount(() => {
   padding: 1rem;
   font: inherit;
   line-height: 1.6;
+  tab-size: 2;
   resize: none;
   outline: none;
   -webkit-touch-callout: none;
