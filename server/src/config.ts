@@ -100,24 +100,25 @@ export const GEMINI_INTERVIEW_EVALUATION_MODEL =
   process.env.GEMINI_INTERVIEW_EVALUATION_MODEL ?? 'gemini-3.1-flash-lite-preview'
 export const GROQ_API_KEY = process.env.GROQ_API_KEY ?? ''
 export const GROQ_VISION_MODEL =
-  process.env.GROQ_VISION_MODEL ?? 'qwen/qwen3.6-27b'
+  process.env.GROQ_VISION_MODEL ?? 'qwen/qwen3.8-27b'
 export const GROQ_INTERVIEW_QUESTION_MODEL =
-  process.env.GROQ_INTERVIEW_QUESTION_MODEL ?? 'llama-3.3-70b-versatile'
+  process.env.GROQ_INTERVIEW_QUESTION_MODEL ?? 'qwen/qwen3.8-27b'
 export const GROQ_INTERVIEW_EVALUATION_MODEL =
-  process.env.GROQ_INTERVIEW_EVALUATION_MODEL ?? 'llama-3.3-70b-versatile'
+  process.env.GROQ_INTERVIEW_EVALUATION_MODEL ?? 'qwen/qwen3.8-27b'
 export const GROQ_VISION_MODELS = buildModelCandidates(
   GROQ_VISION_MODEL,
   process.env.GROQ_VISION_MODEL_FALLBACKS,
+  ['qwen/qwen3.8-27b'],
 )
 export const GROQ_INTERVIEW_QUESTION_MODELS = buildModelCandidates(
   GROQ_INTERVIEW_QUESTION_MODEL,
   process.env.GROQ_INTERVIEW_QUESTION_MODEL_FALLBACKS,
-  ['llama-3.1-8b-instant'],
+  ['qwen/qwen3.8-27b'],
 )
 export const GROQ_INTERVIEW_EVALUATION_MODELS = buildModelCandidates(
   GROQ_INTERVIEW_EVALUATION_MODEL,
   process.env.GROQ_INTERVIEW_EVALUATION_MODEL_FALLBACKS,
-  ['llama-3.1-8b-instant'],
+  ['qwen/qwen3.8-27b'],
 )
 export const AI_INTERVIEW_CONTEXT_MAX_CHARS = Number(
   process.env.AI_INTERVIEW_CONTEXT_MAX_CHARS ?? 12000,
