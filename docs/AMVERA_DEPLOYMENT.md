@@ -2,6 +2,9 @@
 
 Эта инструкция рассчитана на текущий репозиторий без переделки архитектуры.
 
+Для переноса данных после сбоя региона используй
+[инструкцию восстановления](AMVERA_RECOVERY.md).
+
 Что уже готово:
 
 - приложение собирается из `Dockerfile`;
@@ -17,7 +20,8 @@
 - `Пробный` — `170 ₽ / 30 дней`
 - `Начальный` — `290 ₽ / 30 дней`
 
-Для этого проекта я бы выбирал `Начальный`.
+Для штатных бэкапов `/data` по документации Amvera нужен `Начальный Плюс`
+или выше. Указанные цены исторические; актуальные проверь в кабинете.
 
 ## Что важно про платформу
 
@@ -71,9 +75,9 @@
 - `GEMINI_VISION_MODEL=gemini-2.5-flash`
 - `GEMINI_INTERVIEW_QUESTION_MODEL=gemini-3.1-flash-lite-preview`
 - `GEMINI_INTERVIEW_EVALUATION_MODEL=gemini-3.1-flash-lite-preview`
-- `GROQ_VISION_MODEL=qwen/qwen3.6-27b`
-- `GROQ_INTERVIEW_QUESTION_MODEL=llama-3.3-70b-versatile`
-- `GROQ_INTERVIEW_EVALUATION_MODEL=llama-3.3-70b-versatile`
+- `GROQ_VISION_MODEL=qwen/qwen3.8-27b`
+- `GROQ_INTERVIEW_QUESTION_MODEL=qwen/qwen3.8-27b`
+- `GROQ_INTERVIEW_EVALUATION_MODEL=qwen/qwen3.8-27b`
 
 ## 4. Включи домен
 
@@ -97,7 +101,7 @@
 
 Значения:
 
-- `AMVERA_GIT_URL` = `https://git.msk0.amvera.ru/ТВОЙ_ЛОГИН/ТВОЙ_ПРОЕКТ`
+- `AMVERA_GIT_URL` = Git URL из вкладки «Репозиторий» нужного проекта и региона
 - `AMVERA_GIT_USERNAME` = твой логин Amvera
 - `AMVERA_GIT_PASSWORD` = твой пароль Amvera
 
